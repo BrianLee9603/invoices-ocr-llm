@@ -59,6 +59,23 @@ class MinioSettings(BaseSettings):
     secure: bool = False
 
 
+class OllamaSettings(BaseSettings):
+    """Ollama self-hosted LLM settings."""
+
+    model_config = SettingsConfigDict(env_prefix="OLLAMA_")
+
+    host: str = "http://localhost:11434"
+    model: str = "qwen2.5:7b"
+
+
+class ProcessingSettings(BaseSettings):
+    """Processing worker settings."""
+
+    model_config = SettingsConfigDict(env_prefix="PROCESSING_")
+
+    ocr_engine: str = "paddleocr"  # "paddleocr" or "docling"
+
+
 class AppSettings(BaseSettings):
     """Root application settings aggregating all sub-settings."""
 
@@ -74,6 +91,8 @@ class AppSettings(BaseSettings):
     database: DatabaseSettings = DatabaseSettings()
     redis: RedisSettings = RedisSettings()
     minio: MinioSettings = MinioSettings()
+    ollama: OllamaSettings = OllamaSettings()
+    processing: ProcessingSettings = ProcessingSettings()
 
 
 @lru_cache

@@ -161,6 +161,10 @@ class RedisMessageQueue(MessageQueue):
             except asyncio.CancelledError:
                 logger.info("Consumer '%s' shutting down.", consumer_name)
                 break
+            except (aioredis.TimeoutError, TimeoutError):
+                # Standard timeout when no messages arrive during block_ms
+                logger.debug("Timeout waiting for messages on '%s'.", topic)
+                continue
             except Exception:
                 logger.exception("Unexpected error in consumer loop.")
                 await asyncio.sleep(1)  # back off before retry

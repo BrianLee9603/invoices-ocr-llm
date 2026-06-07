@@ -19,3 +19,9 @@ Pillow>=11.0
 # ---- Testing ----
 pytest>=8.0
 pytest-asyncio>=0.25
+
+# ---- Processing (OCR & LLM) ----
+paddlepaddle>=3.2.0,<3.3
+paddleocr>=2.8.0
+docling>=2.0.0
+ollama>=0.4.0
