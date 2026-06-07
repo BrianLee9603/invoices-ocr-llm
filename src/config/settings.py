@@ -6,6 +6,7 @@ Defaults match the local Docker Compose credentials in infra/docker-compose.yaml
 """
 
 from functools import lru_cache
+from typing import Optional
 
 from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -76,6 +77,15 @@ class ProcessingSettings(BaseSettings):
     ocr_engine: str = "paddleocr"  # "paddleocr" or "docling"
 
 
+class GeminiSettings(BaseSettings):
+    """Google Gemini API settings."""
+
+    model_config = SettingsConfigDict(env_prefix="GEMINI_")
+
+    api_key: Optional[str] = None
+    model: str = "gemini-2.5-flash"
+
+
 class AppSettings(BaseSettings):
     """Root application settings aggregating all sub-settings."""
 
@@ -87,11 +97,13 @@ class AppSettings(BaseSettings):
 
     app_env: str = "local"
     log_level: str = "DEBUG"
+    llm_provider: str = "ollama"  # "ollama" or "gemini"
 
     database: DatabaseSettings = DatabaseSettings()
     redis: RedisSettings = RedisSettings()
     minio: MinioSettings = MinioSettings()
     ollama: OllamaSettings = OllamaSettings()
+    gemini: GeminiSettings = GeminiSettings()
     processing: ProcessingSettings = ProcessingSettings()
 
 

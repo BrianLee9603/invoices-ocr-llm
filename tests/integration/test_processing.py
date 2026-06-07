@@ -15,7 +15,7 @@ from src.database.blob_store import MinioBlobStore
 from src.database.queue import RedisMessageQueue
 from src.schemas.document import OcrOutput, TextBlock, InvoiceExtraction
 from src.services.processing.ocr import OcrEngine, PaddleOcrEngine, DoclingOcrEngine
-from src.services.processing.extractor import OllamaExtractor
+from src.services.processing.extractor import LlmExtractor, OllamaExtractor
 from src.services.processing.worker import ProcessingWorker, QUEUE_INGESTION, QUEUE_EXTRACTION
 
 @pytest_asyncio.fixture(autouse=True)
@@ -173,7 +173,7 @@ async def test_processing_worker_flow(sample_image_bytes):
         text_blocks=[TextBlock(text="Mocked Invoice Text", confidence=0.99)]
     ))
 
-    mock_extractor = MagicMock(spec=OllamaExtractor)
+    mock_extractor = MagicMock(spec=LlmExtractor)
     mock_extractor.extract = AsyncMock(return_value=InvoiceExtraction(
         header={
             "invoice_no": "MOCK-123",

@@ -6,7 +6,7 @@ from src.config.settings import get_settings
 from src.database.blob_store import MinioBlobStore
 from src.database.queue import RedisMessageQueue
 from src.services.processing.ocr import create_ocr_engine
-from src.services.processing.extractor import OllamaExtractor
+from src.services.processing.extractor import create_extractor
 from src.services.processing.worker import ProcessingWorker
 
 # Configure logging
@@ -28,11 +28,9 @@ async def main():
     logger.info("Using OCR Engine: %s", ocr_engine_name)
     ocr_engine = create_ocr_engine(ocr_engine_name)
     
-    logger.info("Using Ollama LLM at %s (model: %s)", settings.ollama.host, settings.ollama.model)
-    extractor = OllamaExtractor(
-        host=settings.ollama.host,
-        model_name=settings.ollama.model
-    )
+    logger.info("Using LLM Provider: %s", settings.llm_provider)
+    extractor = create_extractor(settings)
+
     
     worker = ProcessingWorker(
         blob_store=blob_store,

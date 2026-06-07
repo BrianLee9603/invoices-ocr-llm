@@ -9,7 +9,7 @@ from src.database.models import Job
 from src.database.blob_store import BlobStore
 from src.database.queue import MessageQueue
 from src.services.processing.ocr import OcrEngine
-from src.services.processing.extractor import OllamaExtractor
+from src.services.processing.extractor import LlmExtractor
 from src.schemas.document import OcrOutput, InvoiceExtraction
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ class ProcessingWorker:
         blob_store: BlobStore,
         queue: MessageQueue,
         ocr_engine: OcrEngine,
-        extractor: OllamaExtractor,
+        extractor: LlmExtractor,
         worker_id: str = "1",
     ):
         self._blob_store = blob_store
