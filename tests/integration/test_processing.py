@@ -205,7 +205,8 @@ async def test_processing_worker_flow(sample_image_bytes):
         updated_job = res.scalars().first()
         
         assert updated_job is not None
-        assert updated_job.status == "done"
+        assert updated_job.status == "extracted"
+
         assert updated_job.confidence_score == 0.99
         assert updated_job.ocr_output_path == f"invoices/{tenant_id}/{job_id}/ocr_output.json"
         assert updated_job.extraction_output_path == f"invoices/{tenant_id}/{job_id}/extraction.json"

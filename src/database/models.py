@@ -97,6 +97,7 @@ class Job(Base):
     ocr_output_path: Mapped[str | None] = mapped_column(String(512))
     extraction_output_path: Mapped[str | None] = mapped_column(String(512))
     confidence_score: Mapped[float | None] = mapped_column(Float)
+    ocr_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     extraction_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     evaluation_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     ground_truth: Mapped[dict[str, Any] | None] = mapped_column(JSONB)

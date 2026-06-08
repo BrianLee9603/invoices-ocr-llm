@@ -113,7 +113,8 @@ class ProcessingWorker:
                 job_id,
                 "ocr_done",
                 ocr_output_path=ocr_output_path,
-                confidence_score=ocr_output.average_confidence
+                confidence_score=ocr_output.average_confidence,
+                ocr_data=ocr_output.model_dump()
             )
 
             # Stage 2: LLM Structured Extraction
@@ -151,9 +152,8 @@ class ProcessingWorker:
                 }
             )
 
-            # Mark job status as done
-            await self._update_job_status(job_id, "done")
-            logger.info("[%s] Job completed successfully.", job_id)
+            logger.info("[%s] Processing stage completed successfully.", job_id)
+
 
         except Exception as exc:
             logger.exception("Error processing message %s: %s", message_id, exc)

@@ -15,7 +15,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class DatabaseSettings(BaseSettings):
     """PostgreSQL connection settings."""
 
-    model_config = SettingsConfigDict(env_prefix="POSTGRES_")
+    model_config = SettingsConfigDict(env_prefix="POSTGRES_", env_file=".env", extra="ignore")
 
     host: str = "localhost"
     port: int = 5432
@@ -36,7 +36,7 @@ class DatabaseSettings(BaseSettings):
 class RedisSettings(BaseSettings):
     """Redis connection settings."""
 
-    model_config = SettingsConfigDict(env_prefix="REDIS_")
+    model_config = SettingsConfigDict(env_prefix="REDIS_", env_file=".env", extra="ignore")
 
     host: str = "localhost"
     port: int = 6379
@@ -52,7 +52,7 @@ class RedisSettings(BaseSettings):
 class MinioSettings(BaseSettings):
     """MinIO (S3-compatible) connection settings."""
 
-    model_config = SettingsConfigDict(env_prefix="MINIO_")
+    model_config = SettingsConfigDict(env_prefix="MINIO_", env_file=".env", extra="ignore")
 
     endpoint: str = "http://localhost:9000"
     access_key: str = "minioadmin"
@@ -63,7 +63,7 @@ class MinioSettings(BaseSettings):
 class OllamaSettings(BaseSettings):
     """Ollama self-hosted LLM settings."""
 
-    model_config = SettingsConfigDict(env_prefix="OLLAMA_")
+    model_config = SettingsConfigDict(env_prefix="OLLAMA_", env_file=".env", extra="ignore")
 
     host: str = "http://localhost:11434"
     model: str = "qwen2.5:7b"
@@ -72,15 +72,17 @@ class OllamaSettings(BaseSettings):
 class ProcessingSettings(BaseSettings):
     """Processing worker settings."""
 
-    model_config = SettingsConfigDict(env_prefix="PROCESSING_")
+    model_config = SettingsConfigDict(env_prefix="PROCESSING_", env_file=".env", extra="ignore")
 
     ocr_engine: str = "paddleocr"  # "paddleocr" or "docling"
+    preprocess: bool = True  # Enable image preprocessing (CLAHE, de-skew, etc.)
+    layout_reconstruction: bool = True  # Enable layout-aware text reconstruction
 
 
 class GeminiSettings(BaseSettings):
     """Google Gemini API settings."""
 
-    model_config = SettingsConfigDict(env_prefix="GEMINI_")
+    model_config = SettingsConfigDict(env_prefix="GEMINI_", env_file=".env", extra="ignore")
 
     api_key: Optional[str] = None
     model: str = "gemini-2.5-flash"
