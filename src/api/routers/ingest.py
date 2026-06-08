@@ -21,15 +21,15 @@ from src.schemas.job import (
     IngestResponse,
     JobStatusResponse,
 )
-from src.services.ingestion.service import IngestionService
+from src.services.ingestion.worker import IngestionWorker
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ingest", tags=["Ingestion"])
 
 
-def _get_service(request: Request) -> IngestionService:
-    """Retrieve the IngestionService from app state (set in lifespan)."""
+def _get_service(request: Request) -> IngestionWorker:
+    """Retrieve the IngestionWorker from app state (set in lifespan)."""
     return request.app.state.ingestion_service
 
 
@@ -45,7 +45,7 @@ def _get_service(request: Request) -> IngestionService:
 )
 async def ingest_file(
     file: UploadFile,
-    service: IngestionService = Depends(_get_service),
+    service: IngestionWorker = Depends(_get_service),
     db: AsyncSession = Depends(get_db),
 ) -> IngestResponse:
     """
@@ -90,7 +90,7 @@ async def ingest_file(
 )
 async def ingest_dataset(
     body: DatasetIngestRequest,
-    service: IngestionService = Depends(_get_service),
+    service: IngestionWorker = Depends(_get_service),
     db: AsyncSession = Depends(get_db),
 ) -> DatasetIngestResponse:
     """

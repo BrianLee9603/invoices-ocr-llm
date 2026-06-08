@@ -1,5 +1,18 @@
+"""
+ProcessingWorker — Background worker for document OCR and structured LLM extraction.
+
+Responsible for:
+1. Consuming incoming job notifications from Redis queue:ingestion (Queue A).
+2. Downloading documents from MinIO.
+3. Performing text OCR layout extraction via PaddleOCR or Docling.
+4. Structuring extracted text into JSON using LLMs (Ollama or Gemini).
+5. Saving results back to MinIO/PostgreSQL.
+6. Publishing results to queue:extraction (Queue B) for validation/storage.
+"""
+
+from __future__ import annotations
+
 import asyncio
-import json
 import logging
 import uuid
 from typing import Any, Dict, Optional
@@ -12,6 +25,7 @@ from src.services.processing.ocr import OcrEngine
 from src.services.processing.extractor import LlmExtractor
 from src.schemas.document import OcrOutput, InvoiceExtraction
 
+# -- Logger & Constants --------------------------------------------------------
 logger = logging.getLogger(__name__)
 
 QUEUE_INGESTION = "queue:ingestion"
@@ -19,10 +33,12 @@ QUEUE_EXTRACTION = "queue:extraction"
 CONSUMER_GROUP = "processing-group"
 CONSUMER_NAME_PREFIX = "worker-"
 
+
 class ProcessingWorker:
     """
-    Background worker that consumes from `queue:ingestion`, processes documents
-    via OCR and LLM extraction, and publishes structured outputs to `queue:extraction`.
+    Handles the text parsing & layout extraction stage of the pipeline.
+
+    Subscribes to Redis Stream, manages job state flow, and publishes structured outputs.
     """
 
     def __init__(
@@ -163,7 +179,7 @@ class ProcessingWorker:
                 group_name=CONSUMER_GROUP,
                 consumer_name=self._consumer_name,
                 handler=self.handle_message
-            )
+              )
         )
         try:
             await self._running_task

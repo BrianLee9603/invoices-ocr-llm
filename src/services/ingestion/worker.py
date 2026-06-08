@@ -1,7 +1,11 @@
 """
-IngestionService — business logic for file and dataset ingestion.
+IngestionWorker — Core logic for document validation, upload, and queueing.
 
-Orchestrates:  validate → upload to MinIO → insert DB row → publish to Queue A.
+Responsible for:
+1. Validating input files (supported extensions).
+2. Uploading raw invoice/receipt files to MinIO.
+3. Creating job entries in PostgreSQL database.
+4. Enqueueing job messages to Queue A (Redis Streams).
 """
 
 from __future__ import annotations
@@ -18,19 +22,19 @@ from src.database.blob_store import BlobStore
 from src.database.models import Job, Tenant
 from src.database.queue import MessageQueue
 
+# -- Logger & Constants --------------------------------------------------------
 logger = logging.getLogger(__name__)
 
 ALLOWED_EXTENSIONS = {"pdf", "png", "jpg", "jpeg", "webp"}
 BUCKET_NAME = "invoices"
-QUEUE_TOPIC = "queue:ingestion"  # Redis Stream name ("Queue A")
+QUEUE_TOPIC = "queue:ingestion"
 
 
-class IngestionService:
+class IngestionWorker:
     """
-    Encapsulates all ingestion logic.
+    Handles the ingestion stage of the document AI pipeline.
 
-    Dependencies are injected via constructor to keep business logic
-    decoupled from infrastructure.
+    Coordinates storage uploads, database entries, and message routing.
     """
 
     def __init__(
@@ -41,8 +45,6 @@ class IngestionService:
         self._blob = blob_store
         self._queue = queue
 
-    # ── Single file ingest ───────────────────────────────
-
     async def ingest_file(
         self,
         db: AsyncSession,
@@ -52,14 +54,13 @@ class IngestionService:
         ground_truth: dict[str, Any] | None = None,
     ) -> uuid.UUID:
         """
-        Ingest a single file:
-        1. Validate extension
-        2. Upload to MinIO
-        3. Insert Job row in Postgres
-        4. Publish message to Queue A
-        5. Return job_id
+        Ingests a single file into the system.
+
+        1. Validates file extension.
+        2. Uploads the file to MinIO.
+        3. Saves job metadata in PostgreSQL.
+        4. Publishes job to ingestion queue.
         """
-        # 1. Validate
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
         if ext not in ALLOWED_EXTENSIONS:
             raise ValueError(
@@ -67,12 +68,10 @@ class IngestionService:
                 f"Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
             )
 
-        # 2. Upload to MinIO
         job_id = uuid.uuid4()
         minio_path = f"{tenant_id}/{job_id}/input.{ext}"
         await self._blob.put(BUCKET_NAME, minio_path, file_bytes)
 
-        # 3. Insert DB row
         job = Job(
             id=job_id,
             tenant_id=tenant_id,
@@ -81,9 +80,8 @@ class IngestionService:
             ground_truth=ground_truth,
         )
         db.add(job)
-        await db.flush()  # Assign server defaults without committing
+        await db.flush()
 
-        # 4. Publish to Queue A
         await self._queue.publish(
             QUEUE_TOPIC,
             {
@@ -96,8 +94,6 @@ class IngestionService:
         logger.info("Job %s queued (tenant=%s, file=%s)", job_id, tenant_id, filename)
         return job_id
 
-    # ── Dataset batch ingest ─────────────────────────────
-
     async def ingest_dataset(
         self,
         db: AsyncSession,
@@ -106,15 +102,10 @@ class IngestionService:
         tenant_id: uuid.UUID | None = None,
     ) -> list[uuid.UUID]:
         """
-        Batch-ingest samples from the HuggingFace dataset.
-
-        This runs synchronously within the async context because the
-        dataset loader is CPU-bound (PIL image conversion).  For large
-        batches the caller should wrap this in asyncio.create_task().
+        Batch-ingests samples from the Hugging Face dataset.
         """
         from src.services.ingestion.dataset_loader import load_hf_dataset
 
-        # Resolve tenant
         if tenant_id is None:
             result = await db.execute(
                 select(Tenant).where(Tenant.name == "default"),
@@ -127,7 +118,6 @@ class IngestionService:
         job_ids: list[uuid.UUID] = []
 
         for image_bytes, doc_id, parsed_data in load_hf_dataset(split, limit):
-            # Use doc_id as a synthetic filename
             filename = f"{doc_id}.png"
             job_id = await self.ingest_file(
                 db=db,
@@ -141,6 +131,7 @@ class IngestionService:
         await db.commit()
         logger.info(
             "Dataset ingestion complete: %d jobs created (split=%s).",
-            len(job_ids), split,
+            len(job_ids),
+            split,
         )
         return job_ids

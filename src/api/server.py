@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.config.settings import get_settings
 from src.database.blob_store import MinioBlobStore
 from src.database.queue import RedisMessageQueue
-from src.services.ingestion.service import IngestionService
+from src.services.ingestion.worker import IngestionWorker
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     blob_store = MinioBlobStore(settings.minio)
     message_queue = RedisMessageQueue(settings.redis)
 
-    ingestion_service = IngestionService(
+    ingestion_service = IngestionWorker(
         blob_store=blob_store,
         queue=message_queue,
     )

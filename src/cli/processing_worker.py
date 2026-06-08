@@ -16,7 +16,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
-logger = logging.getLogger("worker_main")
+logger = logging.getLogger("cli.worker")
 
 async def main():
     logger.info("Initializing Processing Worker dependencies...")
@@ -31,7 +31,6 @@ async def main():
     logger.info("Using LLM Provider: %s", settings.llm_provider)
     extractor = create_extractor(settings)
 
-    
     worker = ProcessingWorker(
         blob_store=blob_store,
         queue=message_queue,
