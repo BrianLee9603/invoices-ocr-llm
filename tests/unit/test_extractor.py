@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from src.config.settings import AppSettings, OllamaSettings, GeminiSettings
-from src.services.processing.extractor import create_extractor, OllamaExtractor, GeminiExtractor
+from src.services.processing.llm.extractor import create_extractor, OllamaExtractor, GeminiExtractor
 
 def test_create_extractor_ollama():
     settings = MagicMock(spec=AppSettings)

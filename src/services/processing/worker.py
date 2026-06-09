@@ -21,8 +21,8 @@ from src.database.database import AsyncSessionLocal
 from src.database.models import Job
 from src.database.blob_store import BlobStore
 from src.database.queue import MessageQueue
-from src.services.processing.ocr import OcrEngine
-from src.services.processing.extractor import LlmExtractor
+from src.services.processing.ocr.ocr import OcrEngine
+from src.services.processing.llm.extractor import LlmExtractor
 from src.schemas.document import OcrOutput, InvoiceExtraction
 
 # -- Logger & Constants --------------------------------------------------------
@@ -72,6 +72,7 @@ class ProcessingWorker:
         """Processes a single ingestion job message."""
         logger.info("Starting processing message %s with payload: %s", message_id, payload)
         
+        # Parse payload first
         try:
             job_id_str = payload.get("job_id")
             tenant_id_str = payload.get("tenant_id")
@@ -82,7 +83,21 @@ class ProcessingWorker:
 
             job_id = uuid.UUID(job_id_str)
             tenant_id = uuid.UUID(tenant_id_str)
+        except Exception as payload_exc:
+            logger.error("Failed to parse queue payload: %s", payload_exc)
+            return
 
+        # Fetch current retry count
+        current_retry = 0
+        try:
+            async with AsyncSessionLocal() as db:
+                job = await db.get(Job, job_id)
+                if job:
+                    current_retry = job.retry_count or 0
+        except Exception as db_err:
+            logger.warning("[%s] Failed to fetch current retry count from database: %s", job_id, db_err)
+
+        try:
             # Stage 1: Document Parsing (OCR)
             logger.info("[%s] Stage 1: Document Parsing (OCR)", job_id)
             await self._update_job_status(job_id, "ocr_processing")
@@ -121,7 +136,7 @@ class ProcessingWorker:
             logger.info("[%s] Stage 2: LLM Structured Extraction", job_id)
             await self._update_job_status(job_id, "extracting")
 
-            # Run Ollama extraction
+            # Run LLM extraction
             extraction: InvoiceExtraction = await self._extractor.extract(ocr_output)
 
             # Upload extraction JSON to MinIO
@@ -154,20 +169,49 @@ class ProcessingWorker:
 
             logger.info("[%s] Processing stage completed successfully.", job_id)
 
-
         except Exception as exc:
             logger.exception("Error processing message %s: %s", message_id, exc)
-            # Mark job as failed in DB
-            if "job_id" in locals():
+            
+            from src.exceptions import PersistentError, TransientError
+            # Check if this error is persistent/non-retryable
+            is_persistent = isinstance(exc, PersistentError) or isinstance(exc, (ValueError, KeyError, TypeError))
+            MAX_RETRIES = 3
+
+            if not is_persistent and current_retry < MAX_RETRIES:
+                next_retry = current_retry + 1
+                backoff_delay = 5 * (2 ** current_retry)  # 5s, 10s, 20s
+                logger.warning("[%s] Transient error. Requeuing for retry #%d in %ds. Error: %s", job_id, next_retry, backoff_delay, exc)
+                
+                try:
+                    await self._update_job_status(
+                        job_id,
+                        "queued",
+                        retry_count=next_retry,
+                        error_message=f"Transient failure (Retry #{next_retry}): {exc}"
+                    )
+                    
+                    # Run requeue in background to avoid blocking consumer thread
+                    async def requeue_task():
+                        await asyncio.sleep(backoff_delay)
+                        try:
+                            await self._queue.publish(QUEUE_INGESTION, payload)
+                        except Exception as re_exc:
+                            logger.exception("Failed to publish retry message for job %s: %s", job_id, re_exc)
+                    
+                    asyncio.create_task(requeue_task())
+                except Exception as db_exc:
+                    logger.exception("Failed to update status to queued for job %s: %s", job_id, db_exc)
+            else:
+                # Permanent failure or max retries exceeded
+                logger.error("[%s] Permanent failure or max retries exceeded. Marking job as failed. Error: %s", job_id, exc)
                 try:
                     await self._update_job_status(
                         job_id,
                         "failed",
-                        error_message=str(exc)
+                        error_message=f"Failed: {exc}"
                     )
                 except Exception as db_exc:
                     logger.exception("Failed to update status to failed in database for job %s: %s", job_id, db_exc)
-            raise
 
     async def start(self) -> None:
         """Start the background consumer loop."""

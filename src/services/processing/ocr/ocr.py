@@ -321,6 +321,7 @@ class LayoutReconstructor:
 
         return '\n'.join(output_lines)
 
+
 class OcrEngine(ABC):
     """Abstract base class for OCR Engines."""
 
@@ -330,6 +331,7 @@ class OcrEngine(ABC):
         Process the image bytes and return structured OCR output.
         """
         pass
+
 
 class PaddleOcrEngine(OcrEngine):
     """OCR Engine using PaddleOCR with optional image preprocessing and layout reconstruction."""
@@ -344,7 +346,7 @@ class PaddleOcrEngine(OcrEngine):
         self._post_processor = OcrPostProcessor()
         
         if preprocess:
-            from src.services.processing.preprocessor import ImagePreprocessor
+            from src.services.processing.ocr.preprocessor import ImagePreprocessor
             self._preprocessor = ImagePreprocessor()
 
     def _get_ocr(self):
@@ -561,6 +563,7 @@ class PaddleOcrEngine(OcrEngine):
             text_blocks=text_blocks
         )
 
+
 class DoclingOcrEngine(OcrEngine):
     """OCR Engine using IBM's Docling (exports directly to Markdown)."""
 
@@ -612,6 +615,7 @@ class DoclingOcrEngine(OcrEngine):
             average_confidence=0.95,
             text_blocks=text_blocks
         )
+
 
 def create_ocr_engine(engine_name: str, preprocess: bool = True, layout_reconstruction: bool = True) -> OcrEngine:
     if engine_name.lower() == "paddleocr":

@@ -5,8 +5,8 @@ import sys
 from src.config.settings import get_settings
 from src.database.blob_store import MinioBlobStore
 from src.database.queue import RedisMessageQueue
-from src.services.processing.ocr import create_ocr_engine
-from src.services.processing.extractor import create_extractor
+from src.services.processing.ocr.ocr import create_ocr_engine
+from src.services.processing.llm.extractor import create_extractor
 from src.services.processing.worker import ProcessingWorker
 
 # Configure logging

@@ -65,23 +65,8 @@ def validate_extraction(extraction: InvoiceExtraction) -> bool:
         logger.warning("Validation failed: total_net_worth is missing or empty")
         return False
 
-    # 2. Optional VAT calculation cross-check
+    # 2. Line items net worth sum cross-check
     net_val = parse_raw_amount(summary.total_net_worth)
-    vat_val = parse_raw_amount(summary.total_vat)
-    gross_val = parse_raw_amount(summary.total_gross_worth)
-    
-    if net_val is not None and vat_val is not None and gross_val is not None:
-        expected_gross = net_val + vat_val
-        diff = abs(expected_gross - gross_val)
-        if diff > 0.05:
-            logger.warning(
-                "VAT validation warning: net (%f) + vat (%f) = expected gross (%f) "
-                "differs from extracted gross (%f) by %f",
-                net_val, vat_val, expected_gross, gross_val, diff
-            )
-            # We don't fail the extraction for VAT discrepancies since VAT is optional
-            
-    # 3. Line items net worth sum cross-check
     if extraction.items:
         items_net_sum = 0.0
         has_item_net_worth = False

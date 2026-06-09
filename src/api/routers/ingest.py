@@ -169,7 +169,11 @@ async def get_job_status(
         status=job.status,
         input_file_path=job.input_file_path,
         confidence_score=job.confidence_score,
+        ocr_data=job.ocr_data,
+        extraction_data=job.extraction_data,
+        evaluation_data=job.evaluation_data,
         ground_truth=job.ground_truth,
+        error_message=job.error_message,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )

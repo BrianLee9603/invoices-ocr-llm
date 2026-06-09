@@ -44,6 +44,7 @@ CREATE TABLE jobs (
     ocr_output_path VARCHAR(512),
     extraction_output_path VARCHAR(512),
     confidence_score FLOAT,
+    ocr_data JSONB,
     extraction_data JSONB,                        -- Final structured extraction
     evaluation_data JSONB,                        -- Accuracy metrics vs ground truth
     ground_truth JSONB,                           -- HF dataset parsed_data for evaluation

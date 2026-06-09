@@ -60,6 +60,10 @@ class JobStatusResponse(BaseModel):
     status: str
     input_file_path: str
     confidence_score: float | None = None
+    ocr_data: dict | None = None
+    extraction_data: dict | None = None
+    evaluation_data: dict | None = None
     ground_truth: dict | None = None
+    error_message: str | None = None
     created_at: datetime
     updated_at: datetime
