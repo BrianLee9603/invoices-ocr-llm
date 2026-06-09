@@ -50,3 +50,8 @@ ENV/production/
 # Project specific
 @docs/
 docs/
+
+# Local executables and data
+venv_python.exe
+venv_pythonw.exe
+data/
