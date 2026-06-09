@@ -150,6 +150,19 @@ class OutputWorker:
                 job.evaluation_data = evaluation_result
                 await db.commit()
 
+                # 6. Cleanup intermediate JSON files from MinIO to save storage
+                logger.debug("[%s] Cleaning up intermediate JSON files from MinIO...", job_id)
+                for file_key in [
+                    f"{tenant_id}/{job_id}/ocr_output.json",
+                    f"{tenant_id}/{job_id}/extraction.json",
+                    f"{tenant_id}/{job_id}/final_output.json"
+                ]:
+                    try:
+                        if await self._blob_store.exists("invoices", file_key):
+                            await self._blob_store.delete("invoices", file_key)
+                    except Exception as clean_exc:
+                        logger.warning("[%s] Failed to clean up intermediate file %s: %s", job_id, file_key, clean_exc)
+
         except Exception as exc:
             logger.exception("Error processing extraction message %s: %s", message_id, exc)
             

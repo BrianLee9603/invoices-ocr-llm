@@ -96,7 +96,7 @@ class RedisMessageQueue(MessageQueue):
     async def publish(self, topic: str, message: dict) -> str:
         """Publish a JSON-serialized message to a Redis Stream."""
         payload = {"data": json.dumps(message)}
-        message_id: str = await self._redis.xadd(topic, payload)
+        message_id: str = await self._redis.xadd(topic, payload, maxlen=10000, approximate=True)
         logger.debug("XADD %s → %s", topic, message_id)
         return message_id
 
