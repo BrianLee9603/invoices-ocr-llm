@@ -46,7 +46,11 @@ class OllamaExtractor(LlmExtractor):
                     {"role": "user", "content": user_content}
                 ],
                 format=InvoiceExtraction.model_json_schema(),
-                options={"temperature": 0.0}
+                options={
+                    "temperature": 0.0,
+                    "num_ctx": 2048,
+                    "num_predict": 512
+                }
             )
 
             content = response.message.content
@@ -69,7 +73,11 @@ class OllamaExtractor(LlmExtractor):
                             {"role": "user", "content": f"The response was invalid JSON or did not match the schema: {val_exc}. Please fix it and return valid JSON adhering strictly to the schema."}
                         ],
                         format=InvoiceExtraction.model_json_schema(),
-                        options={"temperature": 0.0}
+                        options={
+                            "temperature": 0.0,
+                            "num_ctx": 2048,
+                            "num_predict": 512
+                        }
                     )
                     return InvoiceExtraction.model_validate_json(response_retry.message.content)
                 except Exception as retry_val_exc:

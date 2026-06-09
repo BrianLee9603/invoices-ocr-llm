@@ -1,6 +1,6 @@
 # Intelligent Invoice & Receipt Extraction System (OCR + LLM Pipeline)
 
-An end-to-end Document AI pipeline that processes invoice and receipt images/PDFs, extracts raw text via PaddleOCR, structures it into formatted JSON using Qwen (run locally via Ollama / API) as the primary engine (with Gemini API as an optional fallback), evaluates extraction accuracy against ground truth, and monitors pipeline status through a Streamlit dashboard.
+An end-to-end Document AI pipeline that processes invoice and receipt images/PDFs, extracts raw text via PaddleOCR, structures it into formatted JSON using Qwen (run locally via Ollama / API) as the primary engine (with Gemini API as an optional choice), evaluates extraction accuracy against ground truth, and monitors pipeline status through a Streamlit dashboard.
 
 ---
 
@@ -210,7 +210,7 @@ queued ➔ ocr_processing ➔ ocr_done ➔ extracting ➔ extracted ➔ validati
 ## Evaluation & Custom Validations
 
 ### 1. Target Schema Fields
-The LLM extractor targets structural models defined inside `src/schemas/job.py`. Mandatory fields are:
+The LLM extractor targets structural models defined inside [document.py](file:///c:/Users/PC/Documents/GitHub/invoices-ocr-llm/src/schemas/document.py). Mandatory fields are:
 - `header.invoice_no` (Invoice / receipt number)
 - `header.invoice_date` (Issue date)
 - `summary.total_net_worth` (Net amount)
@@ -219,3 +219,95 @@ The LLM extractor targets structural models defined inside `src/schemas/job.py`.
 - **Compare Invoice Numbers**: Dynamic substring matching filters out generic vendor string prefixes (e.g., matching `0006661` and `SPEEDWAY0006661`).
 - **Unstructured / Scanned Receipt Handlings**: Flat, scanned invoices that do not match hierarchical template fields default to `passed: true` with accuracy scores if the structured schema comparison is not applicable.
 - **Uploaded Invoices**: Documents uploaded through the interactive page lacking ground truth defaults to `passed: true` after a successful extraction rather than scoring 0.0 / false-negative.
+
+---
+
+## System Data Schemas
+
+The pipeline enforces structured data formats at three levels: OCR raw layout output, LLM-based structured extraction, and relational database job tracking.
+
+### 1. OCR Output Schema (`OcrOutput`)
+Defined in [document.py](file:///c:/Users/PC/Documents/GitHub/invoices-ocr-llm/src/schemas/document.py), this model holds the structured output of the OCR engine:
+
+**JSON Output Structure Example:**
+```json
+{
+  "file_name": "input.png",
+  "ocr_engine": "paddleocr",
+  "raw_text": "Invoice no: 54394190\nDate of issue: 02/23/2021\n...",
+  "average_confidence": 0.994,
+  "text_blocks": [
+    {
+      "bbox": [44, 27, 747, 113],
+      "text": "Invoice no: 54394190",
+      "confidence": 0.958
+    }
+  ]
+}
+```
+
+### 2. LLM Structured Extraction Schema (`InvoiceExtraction`)
+Defined in [document.py](file:///c:/Users/PC/Documents/GitHub/invoices-ocr-llm/src/schemas/document.py), this model structures the LLM target parsing schema:
+
+**JSON Output Structure Example:**
+```json
+{
+  "header": {
+    "invoice_no": "54394190",
+    "invoice_date": "02/23/2021",
+    "seller": "Nelson, Bird and Mendoza 48426 John Village USS Smith...",
+    "client": "Allen Inc",
+    "seller_tax_id": "976-76-5964",
+    "client_tax_id": "925-90-1124",
+    "iban": "GB63GDHN20059173458044"
+  },
+  "items": [
+    {
+      "item_desc": "Microsoft Xbox One S 1TB Console System...",
+      "item_qty": "1,00",
+      "item_net_price": "219.99",
+      "item_net_worth": "219.99",
+      "item_gross_worth": "241.99"
+    }
+  ],
+  "summary": {
+    "total_net_worth": "$ 3 359,94",
+    "total_vat": "$ 335,99",
+    "total_gross_worth": "$ 3 695,93"
+  }
+}
+```
+
+### 3. Database Job Schema (`JobStatusResponse`)
+
+```json
+{
+  "job_id": "c9a646d3-9c61-4cd9-bc11-651c6b3f7d12",
+  "status": "completed",
+  "input_file_path": "uploads/invoice_1001.pdf",
+  "confidence_score": 0.95,
+  "ocr_data": {
+    "text": "INVOICE\nInvoice Number: INV-2026-001\nDate: 2026-06-09\nTotal: $1,250.00",
+    "pages": 1
+  },
+  "extraction_data": {
+    "invoice_number": "INV-2026-001",
+    "invoice_date": "2026-06-09",
+    "total_amount": 1250.00,
+    "currency": "USD"
+  },
+  "evaluation_data": {
+    "exact_match": true,
+    "levenshtein_distance": 0
+  },
+  "ground_truth": {
+    "invoice_number": "INV-2026-001",
+    "invoice_date": "2026-06-09",
+    "total_amount": 1250.00
+  },
+  "error_message": null,
+  "created_at": "2026-06-09T22:38:43Z",
+  "updated_at": "2026-06-09T22:39:12Z"
+}
+```
+

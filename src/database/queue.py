@@ -131,6 +131,48 @@ class RedisMessageQueue(MessageQueue):
             consumer_name, topic, group_name,
         )
 
+        # 1. Process pending messages for this consumer on startup (non-blocking)
+        logger.info(
+            "Consumer '%s' checking for pending messages in '%s' (group='%s').",
+            consumer_name, topic, group_name,
+        )
+        try:
+            recovered_ids = set()
+            while True:
+                pending_entries = await self._redis.xreadgroup(
+                    groupname=group_name,
+                    consumername=consumer_name,
+                    streams={topic: "0"},
+                    count=self._batch_count,
+                )
+                if not pending_entries:
+                    break
+
+                processed_any = False
+                for _stream, messages in pending_entries:
+                    for message_id, fields in messages:
+                        if message_id in recovered_ids:
+                            # Avoid infinite loop if message fails to process and isn't ACKed
+                            continue
+                        recovered_ids.add(message_id)
+                        processed_any = True
+                        try:
+                            payload = json.loads(fields["data"])
+                            logger.info("Recovering pending message %s", message_id)
+                            await handler(message_id, payload)
+                            await self.ack(topic, group_name, message_id)
+                        except Exception:
+                            logger.exception(
+                                "Error processing pending message %s from '%s'.",
+                                message_id, topic,
+                            )
+                
+                # If we couldn't process any new pending message (all were already attempted), break
+                if not processed_any:
+                    break
+        except Exception as p_exc:
+            logger.exception("Error checking/processing pending messages: %s", p_exc)
+
         while True:
             try:
                 # XREADGROUP: read new messages (">") for this consumer
