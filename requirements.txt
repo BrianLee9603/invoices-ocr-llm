@@ -4,6 +4,7 @@ pydantic-settings>=2.9
 sqlalchemy[asyncio]>=2.0
 asyncpg>=0.30
 boto3>=1.38
+aioboto3>=13.0
 redis>=5.3
 python-dotenv>=1.1
 

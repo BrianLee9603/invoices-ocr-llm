@@ -59,6 +59,22 @@ class MessageQueue(ABC):
         """Acknowledge successful processing of a message."""
         ...
 
+    @abstractmethod
+    async def reclaim_pending(
+        self,
+        topic: str,
+        group_name: str,
+        consumer_name: str,
+        handler: Callable[[str, dict], Any],
+        idle_ms: int = 30000,
+        batch_count: int = 10,
+    ) -> int:
+        """
+        Scan the PEL for messages idle > idle_ms and re-process them.
+        Returns the number of messages successfully reclaimed and processed.
+        """
+        ...
+
 
 # ──────────────────────────────────────────────────────────
 #  Redis Streams Implementation
@@ -215,6 +231,65 @@ class RedisMessageQueue(MessageQueue):
         """Acknowledge a message so it is removed from the PEL."""
         await self._redis.xack(topic, group_name, message_id)
         logger.debug("XACK %s/%s → %s", topic, group_name, message_id)
+
+    async def reclaim_pending(
+        self,
+        topic: str,
+        group_name: str,
+        consumer_name: str,
+        handler: Callable[[str, dict], Any],
+        idle_ms: int = 30000,
+        batch_count: int = 10,
+    ) -> int:
+        """
+        Scan the PEL for messages idle > idle_ms and re-process them.
+        Returns the number of messages successfully reclaimed and processed.
+        """
+        try:
+            pending_entries = await self._redis.xpending_range(
+                name=topic,
+                groupname=group_name,
+                min="-",
+                max="+",
+                count=batch_count,
+                idle=idle_ms,
+            )
+            if not pending_entries:
+                return 0
+
+            message_ids = [entry["message_id"] for entry in pending_entries]
+            
+            # Claim ownership of these messages
+            claimed_messages = await self._redis.xclaim(
+                name=topic,
+                groupname=group_name,
+                consumername=consumer_name,
+                min_idle_time=idle_ms,
+                message_ids=message_ids,
+            )
+
+            if not claimed_messages:
+                return 0
+
+            processed_count = 0
+            for message_id, fields in claimed_messages:
+                if not message_id or not fields:
+                    continue
+                try:
+                    payload = json.loads(fields["data"])
+                    payload["retry_count"] = int(payload.get("retry_count", 0)) + 1
+                    await handler(message_id, payload)
+                    await self.ack(topic, group_name, message_id)
+                    processed_count += 1
+                except Exception:
+                    logger.exception(
+                        "Error processing reclaimed message %s from '%s'.",
+                        message_id, topic,
+                    )
+            return processed_count
+        except Exception as exc:
+            logger.exception("Error in reclaim_pending for '%s': %s", topic, exc)
+            return 0
 
     # -- lifecycle --------------------------------------------------------
 

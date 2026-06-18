@@ -12,10 +12,9 @@ Responsible for:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from src.database.database import AsyncSessionLocal
 from src.database.models import Job
@@ -24,6 +23,7 @@ from src.database.queue import MessageQueue
 from src.services.processing.ocr.ocr import OcrEngine
 from src.services.processing.llm.extractor import LlmExtractor
 from src.schemas.document import OcrOutput, InvoiceExtraction
+from src.services.base_worker import BaseWorker
 
 # -- Logger & Constants --------------------------------------------------------
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ CONSUMER_GROUP = "processing-group"
 CONSUMER_NAME_PREFIX = "worker-"
 
 
-class ProcessingWorker:
+class ProcessingWorker(BaseWorker):
     """
     Handles the text parsing & layout extraction stage of the pipeline.
 
@@ -48,25 +48,22 @@ class ProcessingWorker:
         ocr_engine: OcrEngine,
         extractor: LlmExtractor,
         worker_id: str = "1",
+        reaper_interval: float = 30.0,
+        reaper_idle_ms: int = 30000,
     ):
-        self._blob_store = blob_store
-        self._queue = queue
+        super().__init__(
+            blob_store=blob_store,
+            queue=queue,
+            topic=QUEUE_INGESTION,
+            group_name=CONSUMER_GROUP,
+            consumer_name_prefix=CONSUMER_NAME_PREFIX,
+            worker_id=worker_id,
+            reaper_interval=reaper_interval,
+            reaper_idle_ms=reaper_idle_ms,
+        )
         self._ocr_engine = ocr_engine
         self._extractor = extractor
-        self._consumer_name = f"{CONSUMER_NAME_PREFIX}{worker_id}"
-        self._running_task: Optional[asyncio.Task] = None
 
-    async def _update_job_status(self, job_id: uuid.UUID, status: str, **kwargs) -> None:
-        """Update job status and additional fields in the database."""
-        async with AsyncSessionLocal() as db:
-            job = await db.get(Job, job_id)
-            if not job:
-                logger.error("Job %s not found in database.", job_id)
-                return
-            job.status = status
-            for key, val in kwargs.items():
-                setattr(job, key, val)
-            await db.commit()
 
     async def handle_message(self, message_id: str, payload: Dict[str, Any]) -> None:
         """Processes a single ingestion job message."""
@@ -87,158 +84,89 @@ class ProcessingWorker:
             logger.error("Failed to parse queue payload: %s", payload_exc)
             return
 
-        # Fetch current retry count
-        current_retry = 0
+        # Fetch current retry count from payload
+        current_retry = int(payload.get("retry_count", 0))
+
         try:
             async with AsyncSessionLocal() as db:
-                job = await db.get(Job, job_id)
-                if job:
-                    current_retry = job.retry_count or 0
-        except Exception as db_err:
-            logger.warning("[%s] Failed to fetch current retry count from database: %s", job_id, db_err)
+                # Stage 1: Document Parsing (OCR)
+                logger.info("[%s] Stage 1: Document Parsing (OCR)", job_id)
+                await self._update_job_status(job_id, "ocr_processing", db=db)
 
-        try:
-            # Stage 1: Document Parsing (OCR)
-            logger.info("[%s] Stage 1: Document Parsing (OCR)", job_id)
-            await self._update_job_status(job_id, "ocr_processing")
+                # Download file from MinIO
+                parts = input_file_path.split("/", 1)
+                if len(parts) != 2:
+                    raise ValueError(f"Invalid input_file_path: {input_file_path}")
+                bucket, key = parts[0], parts[1]
 
-            # Download file from MinIO
-            parts = input_file_path.split("/", 1)
-            if len(parts) != 2:
-                raise ValueError(f"Invalid input_file_path: {input_file_path}")
-            bucket, key = parts[0], parts[1]
+                logger.debug("[%s] Downloading file from MinIO: %s/%s", job_id, bucket, key)
+                image_bytes = await self._blob_store.get(bucket, key)
 
-            logger.debug("[%s] Downloading file from MinIO: %s/%s", job_id, bucket, key)
-            image_bytes = await self._blob_store.get(bucket, key)
+                # Run OCR engine
+                filename = key.split("/")[-1]
+                logger.debug("[%s] Running OCR engine...", job_id)
+                ocr_output: OcrOutput = await self._ocr_engine.process(image_bytes, filename)
 
-            # Run OCR engine
-            filename = key.split("/")[-1]
-            logger.debug("[%s] Running OCR engine...", job_id)
-            ocr_output: OcrOutput = await self._ocr_engine.process(image_bytes, filename)
+                # Upload OCR output JSON to MinIO
+                ocr_output_key = f"{tenant_id}/{job_id}/ocr_output.json"
+                ocr_output_json = ocr_output.model_dump_json()
+                logger.debug("[%s] Uploading ocr_output.json to MinIO...", job_id)
+                await self._blob_store.put(bucket, ocr_output_key, ocr_output_json.encode("utf-8"))
 
-            # Upload OCR output JSON to MinIO
-            ocr_output_key = f"{tenant_id}/{job_id}/ocr_output.json"
-            ocr_output_json = ocr_output.model_dump_json()
-            logger.debug("[%s] Uploading ocr_output.json to MinIO...", job_id)
-            await self._blob_store.put(bucket, ocr_output_key, ocr_output_json.encode("utf-8"))
+                # Update DB with OCR results
+                ocr_output_path = f"{bucket}/{ocr_output_key}"
+                await self._update_job_status(
+                    job_id,
+                    "ocr_done",
+                    db=db,
+                    ocr_output_path=ocr_output_path,
+                    confidence_score=ocr_output.average_confidence,
+                    ocr_data=ocr_output.model_dump()
+                )
 
-            # Update DB with OCR results
-            ocr_output_path = f"{bucket}/{ocr_output_key}"
-            await self._update_job_status(
-                job_id,
-                "ocr_done",
-                ocr_output_path=ocr_output_path,
-                confidence_score=ocr_output.average_confidence,
-                ocr_data=ocr_output.model_dump()
-            )
+                # Stage 2: LLM Structured Extraction
+                logger.info("[%s] Stage 2: LLM Structured Extraction", job_id)
+                await self._update_job_status(job_id, "extracting", db=db)
 
-            # Stage 2: LLM Structured Extraction
-            logger.info("[%s] Stage 2: LLM Structured Extraction", job_id)
-            await self._update_job_status(job_id, "extracting")
+                # Run LLM extraction
+                extraction: InvoiceExtraction = await self._extractor.extract(ocr_output)
 
-            # Run LLM extraction
-            extraction: InvoiceExtraction = await self._extractor.extract(ocr_output)
+                # Upload extraction JSON to MinIO
+                extraction_key = f"{tenant_id}/{job_id}/extraction.json"
+                extraction_json = extraction.model_dump_json()
+                logger.debug("[%s] Uploading extraction.json to MinIO...", job_id)
+                await self._blob_store.put(bucket, extraction_key, extraction_json.encode("utf-8"))
 
-            # Upload extraction JSON to MinIO
-            extraction_key = f"{tenant_id}/{job_id}/extraction.json"
-            extraction_json = extraction.model_dump_json()
-            logger.debug("[%s] Uploading extraction.json to MinIO...", job_id)
-            await self._blob_store.put(bucket, extraction_key, extraction_json.encode("utf-8"))
+                # Update DB with Extraction results
+                extraction_output_path = f"{bucket}/{extraction_key}"
+                await self._update_job_status(
+                    job_id,
+                    "extracted",
+                    db=db,
+                    extraction_output_path=extraction_output_path,
+                    extraction_data=extraction.model_dump()
+                )
 
-            # Update DB with Extraction results
-            extraction_output_path = f"{bucket}/{extraction_key}"
-            await self._update_job_status(
-                job_id,
-                "extracted",
-                extraction_output_path=extraction_output_path,
-                extraction_data=extraction.model_dump()
-            )
+                # Stage 3: Queue B Publishing
+                logger.info("[%s] Stage 3: Queue B Publishing", job_id)
+                await self._queue.publish(
+                    QUEUE_EXTRACTION,
+                    {
+                        "job_id": str(job_id),
+                        "tenant_id": str(tenant_id),
+                        "ocr_output_path": ocr_output_path,
+                        "ocr_confidence": ocr_output.average_confidence,
+                        "extraction_data": extraction.model_dump(),
+                    }
+                )
 
-            # Stage 3: Queue B Publishing
-            logger.info("[%s] Stage 3: Queue B Publishing", job_id)
-            await self._queue.publish(
-                QUEUE_EXTRACTION,
-                {
-                    "job_id": str(job_id),
-                    "tenant_id": str(tenant_id),
-                    "ocr_output_path": ocr_output_path,
-                    "ocr_confidence": ocr_output.average_confidence,
-                    "extraction_data": extraction.model_dump(),
-                }
-            )
-
-            logger.info("[%s] Processing stage completed successfully.", job_id)
+                logger.info("[%s] Processing stage completed successfully.", job_id)
 
         except Exception as exc:
-            logger.exception("Error processing message %s: %s", message_id, exc)
-            
-            from src.exceptions import PersistentError, TransientError
-            # Check if this error is persistent/non-retryable
-            is_persistent = isinstance(exc, PersistentError) or isinstance(exc, (ValueError, KeyError, TypeError))
-            MAX_RETRIES = 3
-
-            if not is_persistent and current_retry < MAX_RETRIES:
-                next_retry = current_retry + 1
-                backoff_delay = 5 * (2 ** current_retry)  # 5s, 10s, 20s
-                logger.warning("[%s] Transient error. Requeuing for retry #%d in %ds. Error: %s", job_id, next_retry, backoff_delay, exc)
-                
-                try:
-                    await self._update_job_status(
-                        job_id,
-                        "queued",
-                        retry_count=next_retry,
-                        error_message=f"Transient failure (Retry #{next_retry}): {exc}"
-                    )
-                    
-                    # Run requeue in background to avoid blocking consumer thread
-                    async def requeue_task():
-                        await asyncio.sleep(backoff_delay)
-                        try:
-                            await self._queue.publish(QUEUE_INGESTION, payload)
-                        except Exception as re_exc:
-                            logger.exception("Failed to publish retry message for job %s: %s", job_id, re_exc)
-                    
-                    asyncio.create_task(requeue_task())
-                except Exception as db_exc:
-                    logger.exception("Failed to update status to queued for job %s: %s", job_id, db_exc)
-            else:
-                # Permanent failure or max retries exceeded
-                logger.error("[%s] Permanent failure or max retries exceeded. Marking job as failed. Error: %s", job_id, exc)
-                try:
-                    await self._update_job_status(
-                        job_id,
-                        "failed",
-                        error_message=f"Failed: {exc}"
-                    )
-                except Exception as db_exc:
-                    logger.exception("Failed to update status to failed in database for job %s: %s", job_id, db_exc)
-
-    async def start(self) -> None:
-        """Start the background consumer loop."""
-        logger.info("Starting ProcessingWorker %s...", self._consumer_name)
-        # Create subscribe task
-        self._running_task = asyncio.create_task(
-            self._queue.subscribe(
-                topic=QUEUE_INGESTION,
-                group_name=CONSUMER_GROUP,
-                consumer_name=self._consumer_name,
-                handler=self.handle_message
-              )
-        )
-        try:
-            await self._running_task
-        except asyncio.CancelledError:
-            logger.info("ProcessingWorker %s task cancelled.", self._consumer_name)
-        except Exception as exc:
-            logger.exception("Error in ProcessingWorker loop: %s", exc)
-
-    async def stop(self) -> None:
-        """Stop the background consumer loop."""
-        if self._running_task:
-            logger.info("Stopping ProcessingWorker %s...", self._consumer_name)
-            self._running_task.cancel()
-            try:
-                await self._running_task
-            except asyncio.CancelledError:
-                pass
-            logger.info("ProcessingWorker %s stopped.", self._consumer_name)
+            await self._handle_exception(
+                exc=exc,
+                job_id=job_id,
+                current_retry=current_retry,
+                transient_status="queued",
+                message_id=message_id,
+            )

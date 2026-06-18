@@ -88,6 +88,7 @@ class IngestionWorker:
                 "job_id": str(job_id),
                 "tenant_id": str(tenant_id),
                 "input_file_path": f"{BUCKET_NAME}/{minio_path}",
+                "retry_count": 0,
             },
         )
 

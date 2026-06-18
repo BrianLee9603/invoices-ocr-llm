@@ -43,6 +43,7 @@ async def main():
                     "job_id": str(job.id),
                     "tenant_id": str(job.tenant_id),
                     "input_file_path": job.input_file_path,
+                    "retry_count": 0,
                 }
                 msg_id = await message_queue.publish(QUEUE_INGESTION, payload)
                 logger.info("Published job %s to %s (msg_id: %s)", job.id, QUEUE_INGESTION, msg_id)

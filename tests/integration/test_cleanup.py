@@ -119,15 +119,16 @@ async def test_output_worker_cleanup_flow(sample_image_bytes):
         assert updated_job is not None
         assert updated_job.status == "done"
 
-    # 6. Verify intermediate JSON files are deleted from MinIO
+    # 6. Verify intermediate JSON files are deleted from MinIO (but final_output.json is NOT deleted)
     assert not await blob_store.exists("invoices", f"{tenant_id}/{job_id}/ocr_output.json")
     assert not await blob_store.exists("invoices", f"{tenant_id}/{job_id}/extraction.json")
-    assert not await blob_store.exists("invoices", f"{tenant_id}/{job_id}/final_output.json")
+    assert await blob_store.exists("invoices", f"{tenant_id}/{job_id}/final_output.json")
 
     # 7. Verify the original file is NOT deleted (it must be kept!)
     assert await blob_store.exists("invoices", f"{tenant_id}/{job_id}/test_invoice_cleanup.png")
 
-    # 8. Cleanup remaining input file and Redis queue
+    # 8. Cleanup remaining files and Redis queue
     await blob_store.delete("invoices", f"{tenant_id}/{job_id}/test_invoice_cleanup.png")
+    await blob_store.delete("invoices", f"{tenant_id}/{job_id}/final_output.json")
     await queue._redis.delete(test_queue_extract)
     await queue.close()

@@ -11,7 +11,7 @@ import io
 import logging
 from abc import ABC, abstractmethod
 
-import boto3
+import aioboto3
 from botocore.exceptions import ClientError
 
 from src.config.settings import MinioSettings
@@ -55,51 +55,55 @@ class MinioBlobStore(BlobStore):
     """
     BlobStore implementation backed by MinIO (S3-compatible API).
 
-    Uses boto3 synchronous client under the hood — boto3 does not have
-    native asyncio support, so I/O-bound calls are acceptable for the
-    expected local-dev workload. For high-throughput production use,
-    consider wrapping in ``asyncio.to_thread()``.
+    Uses aioboto3 for fully asynchronous, non-blocking client operations.
     """
 
     def __init__(self, settings: MinioSettings) -> None:
-        self._client = boto3.client(
+        self._settings = settings
+        self._session = aioboto3.Session()
+
+    def _get_client(self):
+        return self._session.client(
             "s3",
-            endpoint_url=settings.endpoint,
-            aws_access_key_id=settings.access_key,
-            aws_secret_access_key=settings.secret_key,
-            use_ssl=settings.secure,
+            endpoint_url=self._settings.endpoint,
+            aws_access_key_id=self._settings.access_key,
+            aws_secret_access_key=self._settings.secret_key,
+            use_ssl=self._settings.secure,
             # MinIO does not use AWS regions
             region_name="us-east-1",
         )
 
     # -- helpers ----------------------------------------------------------
 
-    def _ensure_bucket(self, bucket: str) -> None:
+    async def _ensure_bucket(self, client, bucket: str) -> None:
         """Create the bucket if it does not already exist."""
         try:
-            self._client.head_bucket(Bucket=bucket)
+            await client.head_bucket(Bucket=bucket)
         except ClientError:
             logger.info("Bucket '%s' not found — creating.", bucket)
-            self._client.create_bucket(Bucket=bucket)
+            await client.create_bucket(Bucket=bucket)
 
     # -- interface --------------------------------------------------------
 
     async def put(self, bucket: str, path: str, data: bytes) -> None:
-        self._ensure_bucket(bucket)
-        self._client.put_object(
-            Bucket=bucket,
-            Key=path,
-            Body=io.BytesIO(data),
-            ContentLength=len(data),
-        )
-        logger.debug("PUT %s/%s (%d bytes)", bucket, path, len(data))
+        async with self._get_client() as client:
+            await self._ensure_bucket(client, bucket)
+            await client.put_object(
+                Bucket=bucket,
+                Key=path,
+                Body=io.BytesIO(data),
+                ContentLength=len(data),
+            )
+            logger.debug("PUT %s/%s (%d bytes)", bucket, path, len(data))
 
     async def get(self, bucket: str, path: str) -> bytes:
         try:
-            response = self._client.get_object(Bucket=bucket, Key=path)
-            data = response["Body"].read()
-            logger.debug("GET %s/%s (%d bytes)", bucket, path, len(data))
-            return data
+            async with self._get_client() as client:
+                response = await client.get_object(Bucket=bucket, Key=path)
+                async with response["Body"] as stream:
+                    data = await stream.read()
+                logger.debug("GET %s/%s (%d bytes)", bucket, path, len(data))
+                return data
         except ClientError as exc:
             if exc.response["Error"]["Code"] == "NoSuchKey":
                 raise FileNotFoundError(
@@ -109,11 +113,13 @@ class MinioBlobStore(BlobStore):
 
     async def exists(self, bucket: str, path: str) -> bool:
         try:
-            self._client.head_object(Bucket=bucket, Key=path)
-            return True
+            async with self._get_client() as client:
+                await client.head_object(Bucket=bucket, Key=path)
+                return True
         except ClientError:
             return False
 
     async def delete(self, bucket: str, path: str) -> None:
-        self._client.delete_object(Bucket=bucket, Key=path)
-        logger.debug("DELETE %s/%s", bucket, path)
+        async with self._get_client() as client:
+            await client.delete_object(Bucket=bucket, Key=path)
+            logger.debug("DELETE %s/%s", bucket, path)

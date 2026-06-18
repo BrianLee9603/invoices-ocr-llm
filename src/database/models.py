@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import (
     DateTime,
     Enum,
+    FetchedValue,
     Float,
     ForeignKey,
     Integer,
@@ -22,7 +23,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from src.database.database import Base
 
@@ -107,11 +108,45 @@ class Job(Base):
         DateTime(timezone=True), server_default=func.current_timestamp(),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.current_timestamp(),
+        DateTime(timezone=True),
+        server_default=func.current_timestamp(),
+        server_onupdate=FetchedValue(),
     )
 
     # Relationships
     tenant: Mapped["Tenant"] = relationship(back_populates="jobs")
+
+    @validates("status")
+    def validate_status(self, key: str, value: str) -> str:
+        """Enforce strict state machine transitions for Job status."""
+        current_status = self.status
+        
+        # Self-transitions are always valid
+        if current_status == value:
+            return value
+
+        # Define valid target states from each source state
+        valid_transitions = {
+            # None represents the initial state when the object is created
+            None: {"queued", "ocr_processing", "ocr_done", "extracting", "extracted", "validating", "done", "failed"},
+            "queued": {"ocr_processing", "failed"},
+            "ocr_processing": {"ocr_done", "queued", "failed"},
+            "ocr_done": {"extracting", "failed"},
+            "extracting": {"extracted", "queued", "failed"},
+            "extracted": {"validating", "done", "failed"},
+            "validating": {"done", "failed"},
+            # Terminal states (done/failed) cannot transition to any other status
+            "done": set(),
+            "failed": set(),
+        }
+
+        allowed_targets = valid_transitions.get(current_status, set())
+        if value not in allowed_targets:
+            raise ValueError(
+                f"Invalid job status transition: '{current_status}' -> '{value}' "
+                f"(Allowed target states: {sorted(list(allowed_targets))})"
+            )
+        return value
 
     def __repr__(self) -> str:
         return f"<Job {self.id} [{self.status}]>"
