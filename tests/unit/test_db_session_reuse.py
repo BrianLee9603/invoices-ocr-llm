@@ -8,7 +8,7 @@ from src.database.models import Job
 from src.schemas.document import OcrOutput, InvoiceExtraction
 
 @pytest.mark.asyncio
-async def test_processing_worker_db_session_reuse():
+async def test_processing_worker_db_session_scoping():
     mock_blob = AsyncMock()
     mock_queue = AsyncMock()
     mock_ocr = AsyncMock()
@@ -57,16 +57,16 @@ async def test_processing_worker_db_session_reuse():
          patch("src.services.base_worker.AsyncSessionLocal", mock_session_cls):
         await worker.handle_message("msg-123", payload)
         
-    # Verify the database session was initialized exactly once
-    assert mock_session_cls.call_count == 1
-    # Verify we committed the intermediate statuses
-    assert mock_session.commit.call_count >= 3
-    # Check intermediate status progression in the same job instance
+    # Verify the database session was initialized for each status update (4 updates total)
+    assert mock_session_cls.call_count == 4
+    # Verify we committed each status update
+    assert mock_session.commit.call_count == 4
+    # Check status progression in the same job instance
     assert job.status == "extracted"
 
 
 @pytest.mark.asyncio
-async def test_output_worker_db_session_reuse():
+async def test_output_worker_db_session_scoping():
     mock_blob = AsyncMock()
     mock_queue = AsyncMock()
     
@@ -96,7 +96,8 @@ async def test_output_worker_db_session_reuse():
          patch("src.services.base_worker.AsyncSessionLocal", mock_session_cls):
         await worker.handle_message("msg-123", payload)
         
-    # Verify the database session was initialized exactly once
-    assert mock_session_cls.call_count == 1
+    # Verify the database session was initialized twice (once for initial fetch, once for final update)
+    assert mock_session_cls.call_count == 2
+    # Only committed in the update session
     assert mock_session.commit.call_count == 1
     assert job.status == "done"

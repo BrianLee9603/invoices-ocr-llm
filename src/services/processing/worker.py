@@ -20,7 +20,7 @@ from src.database.database import AsyncSessionLocal
 from src.database.models import Job
 from src.database.blob_store import BlobStore
 from src.database.queue import MessageQueue
-from src.services.processing.ocr.ocr import OcrEngine
+from src.services.processing.ocr import OcrEngine
 from src.services.processing.llm.extractor import LlmExtractor
 from src.schemas.document import OcrOutput, InvoiceExtraction
 from src.services.base_worker import BaseWorker
@@ -88,79 +88,76 @@ class ProcessingWorker(BaseWorker):
         current_retry = int(payload.get("retry_count", 0))
 
         try:
-            async with AsyncSessionLocal() as db:
-                # Stage 1: Document Parsing (OCR)
-                logger.info("[%s] Stage 1: Document Parsing (OCR)", job_id)
-                await self._update_job_status(job_id, "ocr_processing", db=db)
+            # Stage 1: Document Parsing (OCR)
+            logger.info("[%s] Stage 1: Document Parsing (OCR)", job_id)
+            await self._update_job_status(job_id, "ocr_processing")
 
-                # Download file from MinIO
-                parts = input_file_path.split("/", 1)
-                if len(parts) != 2:
-                    raise ValueError(f"Invalid input_file_path: {input_file_path}")
-                bucket, key = parts[0], parts[1]
+            # Download file from MinIO
+            parts = input_file_path.split("/", 1)
+            if len(parts) != 2:
+                raise ValueError(f"Invalid input_file_path: {input_file_path}")
+            bucket, key = parts[0], parts[1]
 
-                logger.debug("[%s] Downloading file from MinIO: %s/%s", job_id, bucket, key)
-                image_bytes = await self._blob_store.get(bucket, key)
+            logger.debug("[%s] Downloading file from MinIO: %s/%s", job_id, bucket, key)
+            image_bytes = await self._blob_store.get(bucket, key)
 
-                # Run OCR engine
-                filename = key.split("/")[-1]
-                logger.debug("[%s] Running OCR engine...", job_id)
-                ocr_output: OcrOutput = await self._ocr_engine.process(image_bytes, filename)
+            # Run OCR engine
+            filename = key.split("/")[-1]
+            logger.debug("[%s] Running OCR engine...", job_id)
+            ocr_output: OcrOutput = await self._ocr_engine.process(image_bytes, filename)
 
-                # Upload OCR output JSON to MinIO
-                ocr_output_key = f"{tenant_id}/{job_id}/ocr_output.json"
-                ocr_output_json = ocr_output.model_dump_json()
-                logger.debug("[%s] Uploading ocr_output.json to MinIO...", job_id)
-                await self._blob_store.put(bucket, ocr_output_key, ocr_output_json.encode("utf-8"))
+            # Upload OCR output JSON to MinIO
+            ocr_output_key = f"{tenant_id}/{job_id}/ocr_output.json"
+            ocr_output_json = ocr_output.model_dump_json()
+            logger.debug("[%s] Uploading ocr_output.json to MinIO...", job_id)
+            await self._blob_store.put(bucket, ocr_output_key, ocr_output_json.encode("utf-8"))
 
-                # Update DB with OCR results
-                ocr_output_path = f"{bucket}/{ocr_output_key}"
-                await self._update_job_status(
-                    job_id,
-                    "ocr_done",
-                    db=db,
-                    ocr_output_path=ocr_output_path,
-                    confidence_score=ocr_output.average_confidence,
-                    ocr_data=ocr_output.model_dump()
-                )
+            # Update DB with OCR results
+            ocr_output_path = f"{bucket}/{ocr_output_key}"
+            await self._update_job_status(
+                job_id,
+                "ocr_done",
+                ocr_output_path=ocr_output_path,
+                confidence_score=ocr_output.average_confidence,
+                ocr_data=ocr_output.model_dump()
+            )
 
-                # Stage 2: LLM Structured Extraction
-                logger.info("[%s] Stage 2: LLM Structured Extraction", job_id)
-                await self._update_job_status(job_id, "extracting", db=db)
+            # Stage 2: LLM Structured Extraction
+            logger.info("[%s] Stage 2: LLM Structured Extraction", job_id)
+            await self._update_job_status(job_id, "extracting")
 
-                # Run LLM extraction
-                extraction: InvoiceExtraction = await self._extractor.extract(ocr_output)
+            # Run LLM extraction
+            extraction: InvoiceExtraction = await self._extractor.extract(ocr_output)
 
-                # Upload extraction JSON to MinIO
-                extraction_key = f"{tenant_id}/{job_id}/extraction.json"
-                extraction_json = extraction.model_dump_json()
-                logger.debug("[%s] Uploading extraction.json to MinIO...", job_id)
-                await self._blob_store.put(bucket, extraction_key, extraction_json.encode("utf-8"))
+            # Upload extraction JSON to MinIO
+            extraction_key = f"{tenant_id}/{job_id}/extraction.json"
+            extraction_json = extraction.model_dump_json()
+            logger.debug("[%s] Uploading extraction.json to MinIO...", job_id)
+            await self._blob_store.put(bucket, extraction_key, extraction_json.encode("utf-8"))
 
-                # Update DB with Extraction results
-                extraction_output_path = f"{bucket}/{extraction_key}"
-                await self._update_job_status(
-                    job_id,
-                    "extracted",
-                    db=db,
-                    extraction_output_path=extraction_output_path,
-                    extraction_data=extraction.model_dump()
-                )
+            # Update DB with Extraction results
+            extraction_output_path = f"{bucket}/{extraction_key}"
+            await self._update_job_status(
+                job_id,
+                "extracted",
+                extraction_output_path=extraction_output_path,
+                extraction_data=extraction.model_dump()
+            )
 
-                # Stage 3: Queue B Publishing
-                logger.info("[%s] Stage 3: Queue B Publishing", job_id)
-                await self._queue.publish(
-                    QUEUE_EXTRACTION,
-                    {
-                        "job_id": str(job_id),
-                        "tenant_id": str(tenant_id),
-                        "ocr_output_path": ocr_output_path,
-                        "ocr_confidence": ocr_output.average_confidence,
-                        "extraction_data": extraction.model_dump(),
-                    }
-                )
+            # Stage 3: Queue B Publishing
+            logger.info("[%s] Stage 3: Queue B Publishing", job_id)
+            await self._queue.publish(
+                QUEUE_EXTRACTION,
+                {
+                    "job_id": str(job_id),
+                    "tenant_id": str(tenant_id),
+                    "ocr_output_path": ocr_output_path,
+                    "ocr_confidence": ocr_output.average_confidence,
+                    "extraction_data": extraction.model_dump(),
+                }
+            )
 
-                logger.info("[%s] Processing stage completed successfully.", job_id)
+            logger.info("[%s] Processing stage completed successfully.", job_id)
 
         except Exception as exc:
             await self._handle_exception(

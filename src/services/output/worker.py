@@ -81,6 +81,7 @@ class OutputWorker(BaseWorker):
         current_retry = int(payload.get("retry_count", 0))
 
         try:
+            # 1. Fetch job details in a short-lived DB session
             async with AsyncSessionLocal() as db:
                 job = await db.get(Job, job_id)
                 if not job:
@@ -90,67 +91,71 @@ class OutputWorker(BaseWorker):
                     logger.warning("[%s] Job is already in final status '%s'. Skipping.", job_id, job.status)
                     return
 
-                # Parse extraction data to InvoiceExtraction schema
-                extraction = InvoiceExtraction.model_validate(extraction_data)
+                ground_truth = job.ground_truth
 
-                # 1. Run Business Validations
-                logger.debug("[%s] Running business validations...", job_id)
-                valid = validate_extraction(extraction)
-                if not valid:
-                    raise ValueError("Business validation failed: mandatory fields are missing or empty.")
+            # Parse extraction data to InvoiceExtraction schema
+            extraction = InvoiceExtraction.model_validate(extraction_data)
 
-                # 2. Evaluate against Ground Truth (if present)
-                # Default: no ground truth means nothing to fail against — accept extraction as correct
+            # 2. Run Business Validations
+            logger.debug("[%s] Running business validations...", job_id)
+            valid = validate_extraction(extraction)
+            if not valid:
+                raise ValueError("Business validation failed: mandatory fields are missing or empty.")
+
+            # 3. Evaluate against Ground Truth (if present)
+            # Default: no ground truth means nothing to fail against — accept extraction as correct
+            evaluation_result = {
+                "evaluated": False,
+                "passed": True,
+                "field_accuracies": {
+                    "invoice_no": 1.0,
+                    "invoice_date": 1.0,
+                    "total_net_worth": 1.0
+                }
+            }
+
+            if ground_truth:
+                logger.debug("[%s] Ground truth found. Evaluating extraction...", job_id)
+                passed, accuracies = evaluate_extraction(extraction, ground_truth)
                 evaluation_result = {
-                    "evaluated": False,
-                    "passed": True,
-                    "field_accuracies": {
-                        "invoice_no": 1.0,
-                        "invoice_date": 1.0,
-                        "total_net_worth": 1.0
-                    }
+                    "evaluated": True,
+                    "passed": passed,
+                    "field_accuracies": accuracies
                 }
 
-                if job.ground_truth:
-                    logger.debug("[%s] Ground truth found. Evaluating extraction...", job_id)
-                    passed, accuracies = evaluate_extraction(extraction, job.ground_truth)
-                    evaluation_result = {
-                        "evaluated": True,
-                        "passed": passed,
-                        "field_accuracies": accuracies
-                    }
+            # 4. Construct Final Unified Output JSON
+            final_output = {
+                "job_id": str(job_id),
+                "ocr_confidence": ocr_confidence,
+                "extraction": extraction.model_dump(),
+                "evaluation": evaluation_result
+            }
 
-                # 3. Construct Final Unified Output JSON
-                final_output = {
-                    "job_id": str(job_id),
-                    "ocr_confidence": ocr_confidence,
-                    "extraction": extraction.model_dump(),
-                    "evaluation": evaluation_result
-                }
+            # 5. Upload final_output.json to MinIO
+            final_key = f"{tenant_id}/{job_id}/final_output.json"
+            final_json_str = json.dumps(final_output, indent=2)
+            logger.debug("[%s] Uploading final_output.json to MinIO...", job_id)
+            await self._blob_store.put("invoices", final_key, final_json_str.encode("utf-8"))
 
-                # 4. Upload final_output.json to MinIO
-                final_key = f"{tenant_id}/{job_id}/final_output.json"
-                final_json_str = json.dumps(final_output, indent=2)
-                logger.debug("[%s] Uploading final_output.json to MinIO...", job_id)
-                await self._blob_store.put("invoices", final_key, final_json_str.encode("utf-8"))
+            # 6. Update Database Record to completion
+            logger.info("[%s] Updating job record to completed status 'done'", job_id)
+            await self._update_job_status(
+                job_id,
+                "done",
+                evaluation_data=evaluation_result
+            )
 
-                # 5. Update Database Record to completion
-                logger.info("[%s] Updating job record to completed status 'done'", job_id)
-                job.status = "done"
-                job.evaluation_data = evaluation_result
-                await db.commit()
-
-                # 6. Cleanup intermediate JSON files from MinIO to save storage (excluding final_output.json)
-                logger.debug("[%s] Cleaning up intermediate JSON files from MinIO...", job_id)
-                for file_key in [
-                    f"{tenant_id}/{job_id}/ocr_output.json",
-                    f"{tenant_id}/{job_id}/extraction.json"
-                ]:
-                    try:
-                        if await self._blob_store.exists("invoices", file_key):
-                            await self._blob_store.delete("invoices", file_key)
-                    except Exception as clean_exc:
-                        logger.warning("[%s] Failed to clean up intermediate file %s: %s", job_id, file_key, clean_exc)
+            # 7. Cleanup intermediate JSON files from MinIO to save storage (excluding final_output.json)
+            logger.debug("[%s] Cleaning up intermediate JSON files from MinIO...", job_id)
+            for file_key in [
+                f"{tenant_id}/{job_id}/ocr_output.json",
+                f"{tenant_id}/{job_id}/extraction.json"
+            ]:
+                try:
+                    if await self._blob_store.exists("invoices", file_key):
+                        await self._blob_store.delete("invoices", file_key)
+                except Exception as clean_exc:
+                    logger.warning("[%s] Failed to clean up intermediate file %s: %s", job_id, file_key, clean_exc)
         except Exception as exc:
             await self._handle_exception(
                 exc=exc,

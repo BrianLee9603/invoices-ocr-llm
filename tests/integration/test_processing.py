@@ -14,7 +14,7 @@ from src.database.models import Job, Tenant
 from src.database.blob_store import MinioBlobStore
 from src.database.queue import RedisMessageQueue
 from src.schemas.document import OcrOutput, TextBlock, InvoiceExtraction
-from src.services.processing.ocr.ocr import OcrEngine, PaddleOcrEngine, DoclingOcrEngine
+from src.services.processing.ocr import OcrEngine, PaddleOcrEngine, DoclingOcrEngine
 from src.services.processing.llm.extractor import LlmExtractor, OllamaExtractor
 from src.services.processing.worker import ProcessingWorker, QUEUE_INGESTION, QUEUE_EXTRACTION
 

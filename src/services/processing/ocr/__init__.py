@@ -1,5 +1,7 @@
-from src.services.processing.ocr.ocr import OcrEngine, PaddleOcrEngine, DoclingOcrEngine, create_ocr_engine, OcrPostProcessor, LayoutReconstructor
-from src.services.processing.ocr.preprocessor import ImagePreprocessor
+from src.services.processing.ocr.engines import OcrEngine, PaddleOcrEngine, DoclingOcrEngine, create_ocr_engine
+from src.services.processing.ocr.post_processor import OcrPostProcessor
+from src.services.processing.ocr.layout import LayoutReconstructor
+from src.services.processing.ocr.pre_processor import ImagePreprocessor
 
 __all__ = [
     "OcrEngine",
@@ -10,3 +12,4 @@ __all__ = [
     "LayoutReconstructor",
     "ImagePreprocessor",
 ]
+

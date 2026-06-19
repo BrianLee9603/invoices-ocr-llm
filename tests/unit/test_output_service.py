@@ -225,7 +225,8 @@ async def test_worker_handle_message_success():
         }
     }
     
-    with patch("src.services.output.worker.AsyncSessionLocal", mock_session_cls):
+    with patch("src.services.output.worker.AsyncSessionLocal", mock_session_cls), \
+         patch("src.services.base_worker.AsyncSessionLocal", mock_session_cls):
         await worker.handle_message("msg-123", payload)
         
     # Check that blob store upload was called
@@ -285,7 +286,8 @@ async def test_worker_handle_message_idempotency():
         }
     }
     
-    with patch("src.services.output.worker.AsyncSessionLocal", mock_session_cls):
+    with patch("src.services.output.worker.AsyncSessionLocal", mock_session_cls), \
+         patch("src.services.base_worker.AsyncSessionLocal", mock_session_cls):
         await worker.handle_message("msg-123", payload)
         
     # Blob store put should NOT be called

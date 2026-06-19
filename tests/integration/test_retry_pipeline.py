@@ -14,7 +14,7 @@ from src.database.models import Job, Tenant
 from src.database.blob_store import MinioBlobStore
 from src.database.queue import RedisMessageQueue
 from src.schemas.document import OcrOutput, TextBlock, InvoiceExtraction
-from src.services.processing.ocr.ocr import OcrEngine
+from src.services.processing.ocr import OcrEngine
 from src.services.processing.llm.extractor import LlmExtractor
 from src.exceptions import TransientError
 
