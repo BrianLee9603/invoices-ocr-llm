@@ -7,10 +7,12 @@ import time
 import psutil
 from abc import ABC, abstractmethod
 from typing import List, Optional
+from concurrent.futures import ThreadPoolExecutor
 
 from src.schemas.document import OcrOutput, TextBlock
 from src.services.processing.ocr.layout import LayoutReconstructor
 from src.services.processing.ocr.post_processor import OcrPostProcessor
+from src.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,16 @@ class PaddleOcrEngine(OcrEngine):
         self._layout_reconstructor = LayoutReconstructor()
         self._post_processor = OcrPostProcessor()
         
+        # Load app settings
+        settings = get_settings().processing
+        self._ocr_version = settings.ocr_version
+        self._det_limit_side_len = settings.det_limit_side_len
+        self._max_workers = settings.ocr_max_workers
+        self._fallback_enabled = settings.fallback_enabled
+        
+        # Setup fixed-size ThreadPoolExecutor for PaddleOCR to manage memory
+        self._executor = ThreadPoolExecutor(max_workers=self._max_workers, thread_name_prefix="ocr")
+        
         if preprocess:
             from src.services.processing.ocr.pre_processor import ImagePreprocessor
             self._preprocessor = ImagePreprocessor()
@@ -56,7 +68,12 @@ class PaddleOcrEngine(OcrEngine):
             logger.debug("[PaddleOCR] Import PaddleOCR module took %.2fs", import_time)
             
             create_start = time.perf_counter()
-            self._ocr = PaddleOCR(use_angle_cls=True, lang="en")
+            self._ocr = PaddleOCR(
+                use_angle_cls=True,
+                lang="en",
+                ocr_version=self._ocr_version,
+                det_limit_side_len=self._det_limit_side_len,
+            )
             create_time = time.perf_counter() - create_start
             logger.info("[PaddleOCR] Model initialization COMPLETE - creation took %.2fs", create_time)
             
@@ -106,13 +123,14 @@ class PaddleOcrEngine(OcrEngine):
     async def process(self, image_bytes: bytes, filename: str) -> OcrOutput:
         loop = asyncio.get_running_loop()
         process_start = time.perf_counter()
+        original_image_bytes = image_bytes
         
         # Step 0: Image preprocessing (optional)
         if self._preprocessor:
             logger.debug("[%s] Step 0: Preprocessing image...", filename)
             preprocess_start = time.perf_counter()
             image_bytes = await loop.run_in_executor(
-                None,
+                self._executor,
                 lambda: self._preprocessor.preprocess(image_bytes, filename)
             )
             preprocess_time = time.perf_counter() - preprocess_start
@@ -135,14 +153,14 @@ class PaddleOcrEngine(OcrEngine):
             # Run PaddleOCR in a thread pool to avoid blocking the event loop
             logger.debug("[%s] Step 1: Ensure OCR model is loaded...", filename)
             model_start = time.perf_counter()
-            ocr_instance = await loop.run_in_executor(None, self._get_ocr)
+            ocr_instance = await loop.run_in_executor(self._executor, self._get_ocr)
             model_time = time.perf_counter() - model_start
             logger.debug("[%s] Step 1 DONE (%.2fs) - model ready", filename, model_time)
             
             logger.debug("[%s] Step 2: Running PaddleOCR.ocr() on temp file...", filename)
             ocr_start = time.perf_counter()
             result = await loop.run_in_executor(
-                None,
+                self._executor,
                 lambda: self._run_ocr_with_monitoring(ocr_instance, temp_file_path, filename)
             )
             ocr_time = time.perf_counter() - ocr_start
@@ -216,6 +234,19 @@ class PaddleOcrEngine(OcrEngine):
         
         parse_time = time.perf_counter() - parse_start
         logger.debug("[%s] Step 3 DONE (%.2fs) - extracted %d text blocks", filename, parse_time, len(text_blocks))
+
+        # Check for fallback retry if 0 text blocks detected
+        if not text_blocks and self._preprocess and self._fallback_enabled:
+            logger.warning(
+                "[%s] OCR returned 0 text blocks — retrying WITHOUT preprocessing",
+                filename,
+            )
+            # Re-run OCR on raw image bytes, reuse same engine context but disable preprocessing
+            fallback_engine = PaddleOcrEngine(preprocess=False, layout_reconstruction=self._layout_reconstruction)
+            fallback_engine._ocr = self._ocr
+            fallback_engine._model_initialized = self._model_initialized
+            fallback_engine._executor = self._executor
+            return await fallback_engine.process(original_image_bytes, filename)
 
         avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
 

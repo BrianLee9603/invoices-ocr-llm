@@ -77,6 +77,11 @@ class ProcessingSettings(BaseSettings):
     ocr_engine: str = "paddleocr"  # "paddleocr" or "docling"
     preprocess: bool = True  # Enable image preprocessing (CLAHE, de-skew, etc.)
     layout_reconstruction: bool = True  # Enable layout-aware text reconstruction
+    ocr_version: str = "PP-OCRv5"
+    ocr_max_workers: int = 2         # Thread pool size for OCR
+    max_resolution: int = 4000       # Maximum image resolution (long side)
+    fallback_enabled: bool = True    # Retry without preprocessing on 0 blocks
+    det_limit_side_len: int = 960      # PaddleOCR detection max side length
 
 
 class GeminiSettings(BaseSettings):

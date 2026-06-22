@@ -44,8 +44,9 @@ class OcrPostProcessor:
 
         original = text
 
-        # Fix replacement characters (common with accented chars)
-        text = text.replace('\ufffd', 'ó')  # Common: Descripció
+        # Remove Unicode replacement characters rather than guessing
+        # (they could represent any lost character, not just 'ó')
+        text = text.replace('\ufffd', '')
 
         # Fix known word merges
         for merged, fixed in self._WORD_MERGES.items():
@@ -59,7 +60,12 @@ class OcrPostProcessor:
         text = self._L_TO_ONE.sub('1', text)
 
         # Fix the common PaddleOCR "0Z" instead of "%" pattern
-        text = self._PERCENT_FIX.sub(r'\g<1>%', text)
+        # Only apply in likely tax/percentage context (near VAT, Tax, etc.)
+        if any(keyword in text.upper() for keyword in ('VAT', 'TAX', 'IVA', '%')):
+            text = self._PERCENT_FIX.sub(r'\g<1>%', text)
+        else:
+            # Still apply if the pattern looks like a standalone percentage
+            text = re.sub(r'\b(\d{1,2})0Z\b', r'\g<1>%', text)
 
         # Normalize multiple spaces in numbers
         text = self._MULTI_SPACE_IN_NUM.sub(r'\1 \2', text)

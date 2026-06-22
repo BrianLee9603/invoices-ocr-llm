@@ -1,3 +1,4 @@
+import numpy as np
 from typing import List, Optional
 from src.schemas.document import TextBlock
 from src.services.processing.ocr.post_processor import OcrPostProcessor
@@ -96,10 +97,9 @@ class LayoutReconstructor:
             if abs(block_y_center - current_y_center) <= tolerance:
                 # Same row
                 current_row.append(block)
-                # Update row center as running average
-                current_y_center = sum(
-                    (b['y_min'] + b['y_max']) / 2 for b in current_row
-                ) / len(current_row)
+                # Use median to be robust against outliers (wavy text lines)
+                y_centers = [(b['y_min'] + b['y_max']) / 2 for b in current_row]
+                current_y_center = float(np.median(y_centers))
             else:
                 # New row — save current and start new
                 current_row.sort(key=lambda b: b['x_min'])  # Left-to-right within row
@@ -143,7 +143,7 @@ class LayoutReconstructor:
                 sections.append({'type': 'marker', 'text': row_text, 'row_index': i})
                 continue
 
-            if num_cols >= 3:
+            if num_cols >= 2 and self._is_tabular_row(row):
                 consecutive_multi_col += 1
                 if consecutive_multi_col >= 2 and not in_table:
                     # Start of a table region (retroactively include first multi-col row)
@@ -162,7 +162,9 @@ class LayoutReconstructor:
                         'rows': rows[table_start:i],
                     })
                     in_table = False
-                consecutive_multi_col = 0
+                    consecutive_multi_col = 0
+                else:
+                    consecutive_multi_col = 0
 
             if not in_table:
                 sections.append({'type': 'text', 'row': row, 'row_index': i})
@@ -176,6 +178,30 @@ class LayoutReconstructor:
             })
 
         return sections
+
+    def _is_tabular_row(self, row: list) -> bool:
+        """
+        Check if a row has tabular structure (not just 2 text blocks on same line).
+        
+        For rows with >= 3 columns, always return True.
+        For rows with exactly 2 columns, check if there's meaningful horizontal
+        separation (gap > 15% of row width between blocks).
+        """
+        if len(row) >= 3:
+            return True
+        
+        if len(row) == 2:
+            # Check gap between the two blocks
+            block_a, block_b = row[0], row[1]
+            gap = block_b['x_min'] - block_a['x_max']
+            row_width = block_b['x_max'] - block_a['x_min']
+            
+            if row_width > 0:
+                gap_ratio = gap / row_width
+                # Large gap suggests tabular layout, not flowing text
+                return gap_ratio > 0.15
+        
+        return False
 
     def _format_sections(self, sections: list) -> str:
         """Format detected sections into readable structured text."""
