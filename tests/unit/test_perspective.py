@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import cv2
 
-from src.services.processing.ocr.perspective import PerspectiveCorrector
+from src.services.processing.ocr.preprocessing.perspective import PerspectiveCorrector
 
 
 def test_perspective_corrector_no_document():

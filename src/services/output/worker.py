@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from typing import Any, Dict
 
@@ -60,7 +61,7 @@ class OutputWorker(BaseWorker):
 
     async def handle_message(self, message_id: str, payload: Dict[str, Any]) -> None:
         """Processes a single extraction job message."""
-        logger.info("Starting processing extraction message %s with payload: %s", message_id, payload)
+        start_time = time.perf_counter()
         
         try:
             job_id_str = payload.get("job_id")
@@ -77,6 +78,7 @@ class OutputWorker(BaseWorker):
             logger.error("Failed to parse output queue payload: %s", payload_exc)
             return
 
+        logger.info("[%s] Starting business validation & evaluation", job_id)
         # Fetch current retry count from payload
         current_retry = int(payload.get("retry_count", 0))
 
@@ -138,7 +140,7 @@ class OutputWorker(BaseWorker):
             await self._blob_store.put("invoices", final_key, final_json_str.encode("utf-8"))
 
             # 6. Update Database Record to completion
-            logger.info("[%s] Updating job record to completed status 'done'", job_id)
+            logger.debug("[%s] Updating job record to completed status 'done'", job_id)
             await self._update_job_status(
                 job_id,
                 "done",
@@ -156,6 +158,10 @@ class OutputWorker(BaseWorker):
                         await self._blob_store.delete("invoices", file_key)
                 except Exception as clean_exc:
                     logger.warning("[%s] Failed to clean up intermediate file %s: %s", job_id, file_key, clean_exc)
+
+            elapsed = time.perf_counter() - start_time
+            logger.info("[%s] ✓ Validation & evaluation completed successfully in %.2fs", job_id, elapsed)
+
         except Exception as exc:
             await self._handle_exception(
                 exc=exc,

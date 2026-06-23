@@ -48,8 +48,8 @@ class OllamaExtractor(LlmExtractor):
                 format=InvoiceExtraction.model_json_schema(),
                 options={
                     "temperature": 0.0,
-                    "num_ctx": 2048,
-                    "num_predict": 512
+                    "num_ctx": 4096,
+                    "num_predict": 2048
                 }
             )
 
@@ -75,8 +75,8 @@ class OllamaExtractor(LlmExtractor):
                         format=InvoiceExtraction.model_json_schema(),
                         options={
                             "temperature": 0.0,
-                            "num_ctx": 2048,
-                            "num_predict": 512
+                            "num_ctx": 4096,
+                            "num_predict": 2048
                         }
                     )
                     return InvoiceExtraction.model_validate_json(response_retry.message.content)

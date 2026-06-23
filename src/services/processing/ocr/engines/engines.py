@@ -5,13 +5,16 @@ import os
 import tempfile
 import time
 import psutil
+import cv2
+import numpy as np
 from abc import ABC, abstractmethod
 from typing import List, Optional
 from concurrent.futures import ThreadPoolExecutor
 
 from src.schemas.document import OcrOutput, TextBlock
-from src.services.processing.ocr.layout import LayoutReconstructor
-from src.services.processing.ocr.post_processor import OcrPostProcessor
+from src.services.processing.ocr.layout.layout import LayoutReconstructor
+from src.services.processing.ocr.postprocessing.post_processor import OcrPostProcessor
+from src.services.processing.ocr.layout.doclayout import DocLayoutYoloAnalyzer
 from src.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -39,6 +42,7 @@ class PaddleOcrEngine(OcrEngine):
         self._preprocessor = None
         self._layout_reconstructor = LayoutReconstructor()
         self._post_processor = OcrPostProcessor()
+        self._layout_analyzer = None
         
         # Load app settings
         settings = get_settings().processing
@@ -51,8 +55,14 @@ class PaddleOcrEngine(OcrEngine):
         self._executor = ThreadPoolExecutor(max_workers=self._max_workers, thread_name_prefix="ocr")
         
         if preprocess:
-            from src.services.processing.ocr.pre_processor import ImagePreprocessor
+            from src.services.processing.ocr.preprocessing.pre_processor import ImagePreprocessor
             self._preprocessor = ImagePreprocessor()
+
+    def _get_layout_analyzer(self):
+        if self._layout_analyzer is None:
+            logger.info("[PaddleOCR] Initializing DocLayout-YOLO (lazy load)...")
+            self._layout_analyzer = DocLayoutYoloAnalyzer()
+        return self._layout_analyzer
 
     def _get_ocr(self):
         # Lazy initialization so import errors or GPU setup happens on first use
@@ -134,7 +144,7 @@ class PaddleOcrEngine(OcrEngine):
                 lambda: self._preprocessor.preprocess(image_bytes, filename)
             )
             preprocess_time = time.perf_counter() - preprocess_start
-            logger.info("[%s] Step 0 DONE (%.2fs) - Image preprocessed", filename, preprocess_time)
+            logger.debug("[%s] Step 0 DONE (%.2fs) - Image preprocessed", filename, preprocess_time)
         else:
             preprocess_time = 0.0
 
@@ -157,18 +167,42 @@ class PaddleOcrEngine(OcrEngine):
             model_time = time.perf_counter() - model_start
             logger.debug("[%s] Step 1 DONE (%.2fs) - model ready", filename, model_time)
             
-            logger.debug("[%s] Step 2: Running PaddleOCR.ocr() on temp file...", filename)
+            logger.debug("[%s] Step 2: Running OCR and Layout Analysis in parallel...", filename)
             ocr_start = time.perf_counter()
-            result = await loop.run_in_executor(
-                self._executor,
-                lambda: self._run_ocr_with_monitoring(ocr_instance, temp_file_path, filename)
+            
+            # Helper to run layout analysis
+            async def run_layout_analysis():
+                if not self._layout_reconstruction:
+                    return None
+                try:
+                    img_array = np.frombuffer(image_bytes, dtype=np.uint8)
+                    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+                    if img is None:
+                        return None
+                    layout_analyzer = self._get_layout_analyzer()
+                    return await loop.run_in_executor(
+                        self._executor,
+                        lambda: layout_analyzer.detect_regions(img)
+                    )
+                except Exception as e:
+                    logger.warning("[%s] Failed layout analysis: %s", filename, e)
+                    return None
+
+            result, layout_regions = await asyncio.gather(
+                loop.run_in_executor(
+                    self._executor,
+                    lambda: self._run_ocr_with_monitoring(ocr_instance, temp_file_path, filename)
+                ),
+                run_layout_analysis()
             )
+            
             ocr_time = time.perf_counter() - ocr_start
-            logger.info(
-                "[%s] Step 2 DONE (%.2fs) - OCR processed, result has %d pages/sections",
+            logger.debug(
+                "[%s] Step 2 DONE (%.2fs) - OCR processed (%d pages/sections), Layout detected (%d regions)",
                 filename,
                 ocr_time,
                 len(result) if result is not None else 0,
+                len(layout_regions) if layout_regions is not None else 0,
             )
         finally:
             if os.path.exists(temp_file_path):
@@ -246,6 +280,7 @@ class PaddleOcrEngine(OcrEngine):
             fallback_engine._ocr = self._ocr
             fallback_engine._model_initialized = self._model_initialized
             fallback_engine._executor = self._executor
+            fallback_engine._layout_analyzer = self._layout_analyzer
             return await fallback_engine.process(original_image_bytes, filename)
 
         avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
@@ -254,9 +289,9 @@ class PaddleOcrEngine(OcrEngine):
         if self._layout_reconstruction and text_blocks:
             logger.debug("[%s] Step 4: Reconstructing layout from %d text blocks...", filename, len(text_blocks))
             layout_start = time.perf_counter()
-            raw_text = self._layout_reconstructor.reconstruct(text_blocks, self._post_processor)
+            raw_text = self._layout_reconstructor.reconstruct(text_blocks, self._post_processor, layout_regions)
             layout_time = time.perf_counter() - layout_start
-            logger.info("[%s] Step 4 DONE (%.4fs) - Layout reconstructed", filename, layout_time)
+            logger.debug("[%s] Step 4 DONE (%.4fs) - Layout reconstructed", filename, layout_time)
         else:
             # Fallback: flat newline join with post-processing
             raw_text = "\n".join(
@@ -265,7 +300,7 @@ class PaddleOcrEngine(OcrEngine):
             layout_time = 0.0
 
         total_time = time.perf_counter() - process_start
-        logger.info(
+        logger.debug(
             "[%s] ✓ OCR COMPLETE - Total time: %.2fs | Breakdown: preprocess=%.2fs, write=%.2fs, model_load=%.2fs, ocr=%.2fs, parse=%.2fs, layout=%.4fs | Text blocks: %d | Avg confidence: %.3f",
             filename,
             total_time,
@@ -288,63 +323,8 @@ class PaddleOcrEngine(OcrEngine):
         )
 
 
-class DoclingOcrEngine(OcrEngine):
-    """OCR Engine using IBM's Docling (exports directly to Markdown)."""
-
-    def __init__(self):
-        self._converter = None
-
-    def _get_converter(self):
-        if self._converter is None:
-            from docling.document_converter import DocumentConverter
-            self._converter = DocumentConverter()
-        return self._converter
-
-    async def process(self, image_bytes: bytes, filename: str) -> OcrOutput:
-        loop = asyncio.get_running_loop()
-
-        with tempfile.NamedTemporaryFile(suffix=os.path.splitext(filename)[1], delete=False) as temp_file:
-            temp_file.write(image_bytes)
-            temp_file_path = temp_file.name
-
-        try:
-            converter = await loop.run_in_executor(None, self._get_converter)
-            result = await loop.run_in_executor(
-                None,
-                lambda: converter.convert(temp_file_path)
-            )
-            markdown_text = result.document.export_to_markdown()
-        finally:
-            if os.path.exists(temp_file_path):
-                os.remove(temp_file_path)
-
-        # Docling does not output simple OCR blocks with confidence scores directly.
-        # We parse the output by line and assign a default high confidence.
-        text_blocks = []
-        raw_text_lines = markdown_text.splitlines()
-        for line in raw_text_lines:
-            if line.strip():
-                text_blocks.append(
-                    TextBlock(
-                        text=line,
-                        confidence=0.95,
-                        bbox=None
-                    )
-                )
-
-        return OcrOutput(
-            file_name=filename,
-            ocr_engine="docling",
-            raw_text=markdown_text,
-            average_confidence=0.95,
-            text_blocks=text_blocks
-        )
-
-
 def create_ocr_engine(engine_name: str, preprocess: bool = True, layout_reconstruction: bool = True) -> OcrEngine:
     if engine_name.lower() == "paddleocr":
         return PaddleOcrEngine(preprocess=preprocess, layout_reconstruction=layout_reconstruction)
-    elif engine_name.lower() == "docling":
-        return DoclingOcrEngine()
     else:
         raise ValueError(f"Unknown OCR Engine: {engine_name}")

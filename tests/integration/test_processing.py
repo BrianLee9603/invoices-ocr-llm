@@ -14,7 +14,7 @@ from src.database.models import Job, Tenant
 from src.database.blob_store import MinioBlobStore
 from src.database.queue import RedisMessageQueue
 from src.schemas.document import OcrOutput, TextBlock, InvoiceExtraction
-from src.services.processing.ocr import OcrEngine, PaddleOcrEngine, DoclingOcrEngine
+from src.services.processing.ocr import OcrEngine, PaddleOcrEngine
 from src.services.processing.llm.extractor import LlmExtractor, OllamaExtractor
 from src.services.processing.worker import ProcessingWorker, QUEUE_INGESTION, QUEUE_EXTRACTION
 
@@ -52,22 +52,6 @@ async def test_paddle_ocr_engine(sample_image_bytes):
     assert output.text_blocks[0].text == "Invoice No: 123"
     assert output.text_blocks[0].confidence == 0.98
     assert output.text_blocks[0].bbox == [10, 10, 100, 30]
-
-@pytest.mark.asyncio
-async def test_docling_ocr_engine(sample_image_bytes):
-    engine = DoclingOcrEngine()
-    mock_converter = MagicMock()
-    mock_result = MagicMock()
-    mock_result.document.export_to_markdown.return_value = "# Invoice\n\nTotal: 100 USD"
-    mock_converter.convert.return_value = mock_result
-
-    with patch.object(engine, "_get_converter", return_value=mock_converter):
-        output = await engine.process(sample_image_bytes, "test.png")
-
-    assert output.ocr_engine == "docling"
-    assert "# Invoice" in output.raw_text
-    assert len(output.text_blocks) == 2
-    assert output.text_blocks[0].text == "# Invoice"
 
 @pytest.mark.asyncio
 async def test_ollama_extractor_mocked():
@@ -127,6 +111,8 @@ async def test_processing_worker_flow(sample_image_bytes):
     
     blob_store = MinioBlobStore(settings.minio)
     queue = RedisMessageQueue(settings.redis)
+    # Clear ingestion queue of any stale test messages
+    await queue._redis.delete(QUEUE_INGESTION)
     
     # 1. Create a Tenant and a Job in DB
     async with AsyncSessionLocal() as db:

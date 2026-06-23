@@ -74,7 +74,7 @@ class ProcessingSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="PROCESSING_", env_file=".env", extra="ignore")
 
-    ocr_engine: str = "paddleocr"  # "paddleocr" or "docling"
+    ocr_engine: str = "paddleocr"  # "paddleocr"
     preprocess: bool = True  # Enable image preprocessing (CLAHE, de-skew, etc.)
     layout_reconstruction: bool = True  # Enable layout-aware text reconstruction
     ocr_version: str = "PP-OCRv5"

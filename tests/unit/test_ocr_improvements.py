@@ -4,7 +4,7 @@ import numpy as np
 from PIL import Image
 from src.schemas.document import TextBlock
 from src.services.processing.ocr import OcrPostProcessor, LayoutReconstructor
-from src.services.processing.ocr.pre_processor import ImagePreprocessor
+from src.services.processing.ocr.preprocessing.pre_processor import ImagePreprocessor
 
 def test_ocr_post_processor():
     processor = OcrPostProcessor()

@@ -45,6 +45,31 @@ def test_retry_transitions():
     job2.status = "queued"
     assert job2.status == "queued"
 
+def test_crash_recovery_transitions():
+    # Test ocr_done -> ocr_processing (crash recovery retry)
+    job1 = Job(id=uuid.uuid4(), tenant_id=uuid.uuid4(), status="queued")
+    job1.status = "ocr_processing"
+    job1.status = "ocr_done"
+    job1.status = "ocr_processing"
+    assert job1.status == "ocr_processing"
+
+    # Test extracting -> ocr_processing (crash recovery retry)
+    job2 = Job(id=uuid.uuid4(), tenant_id=uuid.uuid4(), status="queued")
+    job2.status = "ocr_processing"
+    job2.status = "ocr_done"
+    job2.status = "extracting"
+    job2.status = "ocr_processing"
+    assert job2.status == "ocr_processing"
+
+    # Test extracted -> ocr_processing (crash recovery retry)
+    job3 = Job(id=uuid.uuid4(), tenant_id=uuid.uuid4(), status="queued")
+    job3.status = "ocr_processing"
+    job3.status = "ocr_done"
+    job3.status = "extracting"
+    job3.status = "extracted"
+    job3.status = "ocr_processing"
+    assert job3.status == "ocr_processing"
+
 def test_failure_transitions():
     # From queued
     job = Job(id=uuid.uuid4(), tenant_id=uuid.uuid4(), status="queued")

@@ -6,15 +6,13 @@ import logging
 import uvicorn
 
 from src.config.settings import get_settings
+from src.utils.logging import setup_logging
 
 
 def main() -> None:
     settings = get_settings()
 
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-    )
+    setup_logging(settings.log_level)
 
     uvicorn.run(
         "src.api.server:app",

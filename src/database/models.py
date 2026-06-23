@@ -131,9 +131,9 @@ class Job(Base):
             None: {"queued", "ocr_processing", "ocr_done", "extracting", "extracted", "validating", "done", "failed"},
             "queued": {"ocr_processing", "failed"},
             "ocr_processing": {"ocr_done", "queued", "failed"},
-            "ocr_done": {"extracting", "failed"},
-            "extracting": {"extracted", "queued", "failed"},
-            "extracted": {"validating", "done", "failed"},
+            "ocr_done": {"extracting", "ocr_processing", "failed"},
+            "extracting": {"extracted", "queued", "ocr_processing", "failed"},
+            "extracted": {"validating", "done", "ocr_processing", "failed"},
             "validating": {"done", "failed"},
             # Terminal states (done/failed) cannot transition to any other status
             "done": set(),

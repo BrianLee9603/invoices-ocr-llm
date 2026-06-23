@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from src.services.processing.ocr.engines import PaddleOcrEngine
+from src.services.processing.ocr.engines.engines import PaddleOcrEngine
 from src.services.processing.ocr.evaluation.metrics import (
     character_error_rate,
     word_error_rate,

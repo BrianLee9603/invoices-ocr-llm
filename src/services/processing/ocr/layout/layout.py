@@ -1,7 +1,7 @@
 import numpy as np
 from typing import List, Optional
 from src.schemas.document import TextBlock
-from src.services.processing.ocr.post_processor import OcrPostProcessor
+from src.services.processing.ocr.postprocessing.post_processor import OcrPostProcessor
 
 
 class LayoutReconstructor:
@@ -25,12 +25,18 @@ class LayoutReconstructor:
         """
         self._row_tolerance_ratio = row_tolerance_ratio
 
-    def reconstruct(self, text_blocks: List[TextBlock], post_processor: Optional[OcrPostProcessor] = None) -> str:
+    def reconstruct(
+        self,
+        text_blocks: List[TextBlock],
+        post_processor: Optional[OcrPostProcessor] = None,
+        layout_regions: Optional[List[dict]] = None
+    ) -> str:
         """Cluster blocks into rows, detect tables, return layout-formatted text.
 
         Args:
             text_blocks: OCR text blocks with bbox coordinates.
             post_processor: Optional post-processor to fix OCR errors.
+            layout_regions: Optional layout regions detected by DocLayout-YOLO.
 
         Returns:
             Layout-reconstructed text with section markers and table formatting.
@@ -72,7 +78,7 @@ class LayoutReconstructor:
         rows = self._cluster_into_rows(valid_blocks)
 
         # Step 2: Detect table vs non-table regions
-        sections = self._detect_sections(rows)
+        sections = self._detect_sections(rows, layout_regions)
 
         # Step 3: Format output
         return self._format_sections(sections)
@@ -113,12 +119,15 @@ class LayoutReconstructor:
 
         return rows
 
-    def _detect_sections(self, rows: list) -> list:
-        """Detect HEADER, TABLE, and SUMMARY sections based on row structure."""
+    def _detect_sections(self, rows: list, layout_regions: Optional[list] = None) -> list:
+        """Detect HEADER, TABLE, and SUMMARY sections based on row structure and YOLO layout analysis."""
         sections = []
         
+        yolo_tables = []
+        if layout_regions:
+            yolo_tables = [r for r in layout_regions if r.get('label') == 'table']
+        
         # Analyze column count distribution to find table regions
-        # A table region has multiple consecutive rows with similar column counts (>= 3)
         table_start = None
         table_header_row = None
         in_table = False
@@ -126,6 +135,19 @@ class LayoutReconstructor:
 
         for i, row in enumerate(rows):
             num_cols = len(row)
+            
+            # Calculate row y center to check overlap with YOLO table regions
+            y_centers = [(b['y_min'] + b['y_max']) / 2 for b in row]
+            row_y_center = float(np.median(y_centers)) if y_centers else 0
+            
+            is_yolo_table_row = False
+            for tbl in yolo_tables:
+                tbl_box = tbl['bbox'] # [xmin, ymin, xmax, ymax]
+                # Allow a small vertical tolerance (5% of table height)
+                tolerance = (tbl_box[3] - tbl_box[1]) * 0.05
+                if (tbl_box[1] - tolerance) <= row_y_center <= (tbl_box[3] + tolerance):
+                    is_yolo_table_row = True
+                    break
             
             # Check for section markers
             row_text = ' '.join(b['text'] for b in row).strip().upper()
@@ -143,7 +165,10 @@ class LayoutReconstructor:
                 sections.append({'type': 'marker', 'text': row_text, 'row_index': i})
                 continue
 
-            if num_cols >= 2 and self._is_tabular_row(row):
+            # Tabular check: either YOLO table row OR heuristic tabular row
+            is_tabular = is_yolo_table_row or (num_cols >= 2 and self._is_tabular_row(row))
+
+            if is_tabular:
                 consecutive_multi_col += 1
                 if consecutive_multi_col >= 2 and not in_table:
                     # Start of a table region (retroactively include first multi-col row)

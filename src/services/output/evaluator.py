@@ -150,7 +150,7 @@ def evaluate_extraction(
     # Passed rule: all three fields must match in content
     passed = no_match and date_match and net_match
     
-    logger.info(
+    logger.debug(
         "Evaluation results: passed=%s | accuracies=%s | Extracted: no='%s' date='%s' net='%s' | GT: no='%s' date='%s' net='%s'",
         passed, accuracies, 
         ext_invoice_no, ext_invoice_date, ext_total_net_worth,

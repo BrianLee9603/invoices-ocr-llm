@@ -148,19 +148,28 @@ async def test_dataset_ingest_background(client):
     assert data["total_jobs"] == 0
     assert data["job_ids"] == []
     
-    # Wait a few seconds for background task to complete processing
-    await asyncio.sleep(5)
-    
-    # Verify that jobs were successfully created
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Job).order_by(Job.created_at.desc()).limit(6))
-        jobs = result.scalars().all()
-        assert len(jobs) >= 6
-        for job in jobs[:6]:
-            assert job.status == "queued"
-            assert job.ground_truth is not None
-            
-            # Cleanup MinIO
-            blob_store = app.state.blob_store
-            bucket, path = job.input_file_path.split("/", 1)
-            await blob_store.delete(bucket, path)
+    # Poll for background task to complete processing (up to 15 seconds)
+    jobs = []
+    for _ in range(15):
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(Job)
+                .order_by(Job.created_at.desc())
+            )
+            all_jobs = result.scalars().all()
+            current_jobs = [j for j in all_jobs if j.ground_truth is not None]
+            if len(current_jobs) >= 8:  # 2 from inline + 6 from background
+                jobs = current_jobs
+                break
+        await asyncio.sleep(1)
+
+    assert len(jobs) >= 8
+    # The 6 most recent ones should be our queued background jobs
+    for job in jobs[:6]:
+        assert job.status == "queued"
+        assert job.ground_truth is not None
+        
+        # Cleanup MinIO
+        blob_store = app.state.blob_store
+        bucket, path = job.input_file_path.split("/", 1)
+        await blob_store.delete(bucket, path)

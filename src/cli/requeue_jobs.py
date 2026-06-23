@@ -8,14 +8,11 @@ from src.database.database import AsyncSessionLocal
 from src.database.models import Job
 from src.database.queue import RedisMessageQueue
 from src.services.processing.worker import QUEUE_INGESTION
+from src.utils.logging import setup_logging
 
 # Configure logging
 settings = get_settings()
-logging.basicConfig(
-    level=getattr(logging, settings.log_level),
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
+setup_logging(settings.log_level)
 logger = logging.getLogger("cli.requeue")
 
 async def main():

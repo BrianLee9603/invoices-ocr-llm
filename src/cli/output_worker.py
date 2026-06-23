@@ -6,14 +6,11 @@ from src.config.settings import get_settings
 from src.database.blob_store import MinioBlobStore
 from src.database.queue import RedisMessageQueue
 from src.services.output.worker import OutputWorker
+from src.utils.logging import setup_logging
 
 # Configure logging
 settings = get_settings()
-logging.basicConfig(
-    level=getattr(logging, settings.log_level),
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
+setup_logging(settings.log_level)
 logger = logging.getLogger("cli.output_worker")
 
 async def main():
@@ -25,7 +22,8 @@ async def main():
     worker = OutputWorker(
         blob_store=blob_store,
         queue=message_queue,
-        worker_id="1"
+        worker_id="1",
+        reaper_idle_ms=300000,
     )
     
     logger.info("Starting Output Worker. Press Ctrl+C to stop.")

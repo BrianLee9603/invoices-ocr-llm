@@ -10,12 +10,12 @@ import logging
 import cv2
 import numpy as np
 
-from src.services.processing.ocr.quality_assessor import (
+from src.services.processing.ocr.preprocessing.quality_assessor import (
     DocumentQualityAssessor,
     PreprocessingStrategy,
     QualityReport,
 )
-from src.services.processing.ocr.perspective import PerspectiveCorrector
+from src.services.processing.ocr.preprocessing.perspective import PerspectiveCorrector
 
 logger = logging.getLogger(__name__)
 

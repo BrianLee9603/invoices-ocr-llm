@@ -4,12 +4,12 @@ import pytest
 import cv2
 from PIL import Image
 
-from src.services.processing.ocr.quality_assessor import (
+from src.services.processing.ocr.preprocessing.quality_assessor import (
     DocumentQualityAssessor,
     ImageSource,
     PreprocessingStrategy,
 )
-from src.services.processing.ocr.pre_processor import ImagePreprocessor
+from src.services.processing.ocr.preprocessing.pre_processor import ImagePreprocessor
 
 
 def test_quality_assessor_clean_image():

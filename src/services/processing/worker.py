@@ -13,6 +13,7 @@ Responsible for:
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from typing import Any, Dict
 
@@ -67,7 +68,7 @@ class ProcessingWorker(BaseWorker):
 
     async def handle_message(self, message_id: str, payload: Dict[str, Any]) -> None:
         """Processes a single ingestion job message."""
-        logger.info("Starting processing message %s with payload: %s", message_id, payload)
+        start_time = time.perf_counter()
         
         # Parse payload first
         try:
@@ -84,12 +85,13 @@ class ProcessingWorker(BaseWorker):
             logger.error("Failed to parse queue payload: %s", payload_exc)
             return
 
+        logger.info("[%s] Starting processing (OCR + LLM) - file: %s", job_id, input_file_path)
         # Fetch current retry count from payload
         current_retry = int(payload.get("retry_count", 0))
 
         try:
             # Stage 1: Document Parsing (OCR)
-            logger.info("[%s] Stage 1: Document Parsing (OCR)", job_id)
+            logger.debug("[%s] Stage 1: Document Parsing (OCR)", job_id)
             await self._update_job_status(job_id, "ocr_processing")
 
             # Download file from MinIO
@@ -123,7 +125,7 @@ class ProcessingWorker(BaseWorker):
             )
 
             # Stage 2: LLM Structured Extraction
-            logger.info("[%s] Stage 2: LLM Structured Extraction", job_id)
+            logger.debug("[%s] Stage 2: LLM Structured Extraction", job_id)
             await self._update_job_status(job_id, "extracting")
 
             # Run LLM extraction
@@ -145,7 +147,7 @@ class ProcessingWorker(BaseWorker):
             )
 
             # Stage 3: Queue B Publishing
-            logger.info("[%s] Stage 3: Queue B Publishing", job_id)
+            logger.debug("[%s] Stage 3: Queue B Publishing", job_id)
             await self._queue.publish(
                 QUEUE_EXTRACTION,
                 {
@@ -157,7 +159,8 @@ class ProcessingWorker(BaseWorker):
                 }
             )
 
-            logger.info("[%s] Processing stage completed successfully.", job_id)
+            elapsed = time.perf_counter() - start_time
+            logger.info("[%s] ✓ Processing completed successfully in %.2fs", job_id, elapsed)
 
         except Exception as exc:
             await self._handle_exception(
